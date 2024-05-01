@@ -2,8 +2,8 @@ from AbstractAgent import Agent
 
 class RandomAgent(Agent):
     
-    def __init__(self):
-        super().__init__()
+    def __init__(self, env):
+        super().__init__(env)
         
     def select_action(self, state):
         return self.action_space.sample()
@@ -21,7 +21,7 @@ class RandomAgent(Agent):
         episode_reward = 0
         while not done :
             action = self.select_action(state)
-            next_state, reward, terminated, truncated, _ = env.step(action)
+            next_state, reward, terminated, truncated, _ = self.env.step(action)
 
             self.observe(state, action, next_state, reward)
             

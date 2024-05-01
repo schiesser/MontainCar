@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 class DQN(nn.Module):
 
-    def __init__(self, info_per_state, number_actions)
+    def __init__(self, info_per_state = 2, number_actions = 3):
         super(DQN, self).__init__()
         """
         input of neural : what characterizes a state
