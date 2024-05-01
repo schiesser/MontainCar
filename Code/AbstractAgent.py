@@ -4,9 +4,10 @@ env = gym.make('MountainCar-v0')
 
 class Agent:
     
-    def __init__(self):
+    def __init__(self,env):
         self.starting_state, initial_observation = env.reset()
         self.action_space = env.action_space
+        self.env = env
         self.observations = []
         
 
