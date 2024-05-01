@@ -1,4 +1,5 @@
 from AbstractAgent import Agent
+from DQN import DQN
 
 class DQNAgent(Agent):
     
@@ -7,7 +8,7 @@ class DQNAgent(Agent):
         self.discount_factor = discount_factor
         self.batch_size = batch_size
         
-    def select_action(self, env, epsilon, Q):
+    def select_action(self, state):
         # e-greedy, that can vary (see doc)
         """
         Chooses an epsilon-greedy action starting from a given state and given Q-values
