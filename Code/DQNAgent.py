@@ -1,19 +1,24 @@
 from AbstractAgent import Agent
 from DQN import DQN
+from replay_buffer import ReplayMemory
 import math
 import random
 import torch
+import torch.nn as nn
+import torch.optim as optim
 
 class DQNAgent(Agent):
     
-    def __init__(self, env, discount_factor = 0.99):
+    def __init__(self, env, discount_factor = 0.99, capacity = 10000):
         super().__init__(env)
         self.discount_factor = discount_factor
         self.observations = []
-        self.NeuralNet = DQN()
+        self.targetNet = DQN()
+        self.fastupdateNet = DQN()
+        self.replay_buffer = ReplayMemory(capacity)
+        self.capacity = capacity
         
     def select_action(self, state, iteration_number, starting_epsilon, ending_epsilon, epsilon_decay):
-
         """
         Chooses an epsilon-greedy action given a state and its Q-values associated
         parameters : starting_epsilon, ending_epsilon, epsilon_decay allow to manage exploitation and exploration during action selection
@@ -27,34 +32,64 @@ class DQNAgent(Agent):
         else :
             return torch.tensor([[self.action_space.sample()]], device=device, dtype=torch.long)
         
-    def update(self):
-        states = [ torch.tensor(e[0]) for e in self.observations]
-        actions = [ torch.tensor(e[1]) for e in self.observations]
-        next_states = [ torch.tensor(e[2]) for e in self.observations]
-        rewards = [ torch.tensor(e[3]) for e in self.observations]
-        
-        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-                                          next_states)), dtype=torch.bool)
-        
-        non_final_next_states = torch.cat([s for s in next_states
-                                                if s is not None])
-        #state_action_values = policy_net(states).gather(1, actions)
-    
-    def run(self):
-        state = self.starting_state
-        done = Fals
-        episode_reward = 0
-        while not done :
-            action = self.select_action(state)
-            next_state, reward, terminated, truncated, _ = env.step(action)
+    def update(self, batch_size, learning_rate):
 
-            self.observe(state, action, next_state, reward)
+        list_transitions = self.replay_buffer.memory.sample(batch_size)
+        
+        for i in range(len(list_transitions)):
+            transitions = list_transitions[i]
+            batch = Transition(*zip(*transitions))
+
+            non_final_mask = torch.tensor(tuple(map(lambda s:s is not None, batch.next_state)), dtype=torch.bool)
+            non_final_next_states = torch.cat([s for s in batch.next_state])
+
+            states = torch.cat([batch.state])
+            actions = torch.cat([batch.state])
+            rewards = torch.cat([batch.state])
+
+            state_action_values = self.fastupdateNet(state_batch).gather(1, action_batch)
+            next_state_values = torch.zeros(BATCH_SIZE, device=device)
             
-            episode_reward += reward
-            state = next_state
-            done = terminated or truncated
+            with torch.no_grad():
+                next_state_values[non_final_mask] = self.targetNet(non_final_next_states).max(1).values
 
-        self.update()
+            expected_state_action_values = (next_state_values * self.discount_factor) + reward_batch
+
+            criterion = nn.MSELoss()
+            loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+
+            optimizer = optim.AdamW(self.fastupdateNet.parameters(), lr = learning_rate, amsgrad=True)
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_value_(self.fastupdateNet.parameters(), 100) # don't understand the reason of the usage
+            optimizer.step()
+        self.targetNet.state_dict()=self.fastupdateNet.state_dict()
+
+    def run(self, number_episode):
+
+        for i in range(number_episode):
+            
+            self.replay_buffer = ReplayMemory(self.capacity)
+            
+            state, initial_observation = env.reset()
+            state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            done = False
+            while not done :
+                action = self.select_action(state)
+                next_state, reward, terminated, truncated, _ = env.step(action.item())
+                reward = torch.tensor([reward])
+                done = terminated or truncated
+                
+                if done :
+                    next_state = None
+                else :
+                    next_state = torch.tensor(next_state, dtype = torch.float32).unsqueeze(0)
+                
+                self.replay_buffer.push(state, action, next_state, reward)
+
+                state = next_state
+
         
-        return episode_reward
+        
+    def 
         
