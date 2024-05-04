@@ -1,24 +1,27 @@
 from AbstractAgent import Agent
 from DQN import DQN
 from replay_buffer import ReplayMemory
+import numpy as np
 import math
 import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from collections import namedtuple, deque
 
 class DQNAgent(Agent):
     
     def __init__(self, env, discount_factor = 0.99, capacity = 10000):
         super().__init__(env)
+        self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
         self.discount_factor = discount_factor
         self.observations = []
         self.targetNet = DQN()
         self.fastupdateNet = DQN()
-        self.replay_buffer = ReplayMemory(capacity)
+        self.replay_buffer = ReplayMemory(capacity, self.Transition)
         self.capacity = capacity
         
-    def select_action(self, state, iteration_number, starting_epsilon, ending_epsilon, epsilon_decay):
+    def select_action(self, state, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 1000):
         """
         Chooses an epsilon-greedy action given a state and its Q-values associated
         parameters : starting_epsilon, ending_epsilon, epsilon_decay allow to manage exploitation and exploration during action selection
@@ -28,32 +31,32 @@ class DQNAgent(Agent):
         
         if np.random.uniform(0, 1) > epsilon:
             with torch.no_grad(): #doesn't track the operation for the training
-                return policy_net(state).max(1).indices.view(1, 1)
+                return self.fastupdateNet(state).max(1).indices.view(1, 1)
         else :
-            return torch.tensor([[self.action_space.sample()]], device=device, dtype=torch.long)
+            return torch.tensor([[self.action_space.sample()]], dtype=torch.long)
         
     def update(self, batch_size, learning_rate):
 
-        list_transitions = self.replay_buffer.memory.sample(batch_size)
-        
+        list_transitions = self.replay_buffer.sample(batch_size)
+                
         for i in range(len(list_transitions)):
             transitions = list_transitions[i]
-            batch = Transition(*zip(*transitions))
+            batch = self.replay_buffer.Transition(*zip(*transitions))
 
             non_final_mask = torch.tensor(tuple(map(lambda s:s is not None, batch.next_state)), dtype=torch.bool)
-            non_final_next_states = torch.cat([s for s in batch.next_state])
+            non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
 
-            states = torch.cat([batch.state])
-            actions = torch.cat([batch.state])
-            rewards = torch.cat([batch.state])
+            states = torch.cat(batch.state)
+            actions = torch.cat(batch.action)
+            rewards = torch.cat(batch.reward)
 
-            state_action_values = self.fastupdateNet(state_batch).gather(1, action_batch)
-            next_state_values = torch.zeros(BATCH_SIZE, device=device)
+            state_action_values = self.fastupdateNet(states).gather(1, actions)
+            next_state_values = torch.zeros(batch_size)
             
             with torch.no_grad():
                 next_state_values[non_final_mask] = self.targetNet(non_final_next_states).max(1).values
 
-            expected_state_action_values = (next_state_values * self.discount_factor) + reward_batch
+            expected_state_action_values = (next_state_values * self.discount_factor) + rewards
 
             criterion = nn.MSELoss()
             loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
@@ -63,20 +66,28 @@ class DQNAgent(Agent):
             loss.backward()
             torch.nn.utils.clip_grad_value_(self.fastupdateNet.parameters(), 100) # don't understand the reason of the usage
             optimizer.step()
-        self.targetNet.state_dict()=self.fastupdateNet.state_dict()
+            
+        self.targetNet.load_state_dict(self.fastupdateNet.state_dict())
 
-    def run(self, number_episode):
+    def run(self, number_episode, batch_size, learning_rate):
 
+        iteration_number = 0
+        
         for i in range(number_episode):
             
-            self.replay_buffer = ReplayMemory(self.capacity)
+            iteration_number += 1
             
-            state, initial_observation = env.reset()
+            self.replay_buffer = ReplayMemory(self.capacity, self.Transition)
+            
+            state, initial_observation = self.env.reset()
+            
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            
             done = False
             while not done :
-                action = self.select_action(state)
-                next_state, reward, terminated, truncated, _ = env.step(action.item())
+                
+                action = self.select_action(state, iteration_number)
+                next_state, reward, terminated, truncated, _ = self.env.step(action.item())
                 reward = torch.tensor([reward])
                 done = terminated or truncated
                 
@@ -89,7 +100,5 @@ class DQNAgent(Agent):
 
                 state = next_state
 
-        
-        
-    def 
+            self.update(batch_size, learning_rate)
         

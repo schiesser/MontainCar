@@ -1,17 +1,18 @@
 import random
-from collections import namedtuple, deque
+from collections import deque
 
 class ReplayMemory(object):
 
-    def __init__(self, capacity):
+    def __init__(self, capacity, Transition):
         self.memory = deque([], maxlen=capacity)
+        self.Transition = Transition
 
     def push(self, *args):
-        self.memory.append(Transition(*args))
+        self.memory.append(self.Transition(*args))
 
     def sample(self, batch_size):
         random.shuffle(self.memory)
-        list_batch = [self.memory[i:i+batch_size] for i in range(0, len(self.memory), batch_size)]
+        list_batch = [list(self.memory)[int(i):int(i+batch_size)] for i in range(0, int(len(self.memory)), batch_size)]
         # attention when setting the batch size : avoid to have a small last batch
         return list_batch
 

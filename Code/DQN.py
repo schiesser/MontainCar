@@ -22,5 +22,5 @@ class DQN(nn.Module):
         !!! maybe later try with other activiation function ?
         """
         x = F.relu(self.layer1(x))
-        x = F.relu(self.layer1(x))
+        x = F.relu(self.layer2(x))
         return self.layer3(x)
