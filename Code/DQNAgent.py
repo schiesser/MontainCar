@@ -11,7 +11,7 @@ from collections import namedtuple, deque
 
 class DQNAgent(Agent):
     
-    def __init__(self, env, discount_factor = 0.99, capacity = 10000):
+    def __init__(self, env, discount_factor = 0.99, capacity = 10000, heuristic_reward = False):
         super().__init__(env)
         self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
         self.discount_factor = discount_factor
@@ -20,6 +20,7 @@ class DQNAgent(Agent):
         self.fastupdateNet = DQN()
         self.replay_buffer = ReplayMemory(capacity, self.Transition)
         self.capacity = capacity
+        self.use_heuristic_reward_function = heuristic_reward
         
     def select_action(self, state, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 1000):
         """
@@ -82,12 +83,35 @@ class DQNAgent(Agent):
             state, initial_observation = self.env.reset()
             
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+
+            best_next_action = 100
             
             done = False
             while not done :
                 
                 action = self.select_action(state, iteration_number)
                 next_state, reward, terminated, truncated, _ = self.env.step(action.item())
+                
+                if self.use_heuristic_reward_function :
+                    testing_state = state.numpy()[0]
+                    
+                    if action == best_next_action: 
+                        if testing_state[0] > -0.5 :
+                            if testing_state[1] > 0:
+                                reward = 10 # to be define relatively to the position 
+                            else :
+                                reward = 10 # to be define relatively to the speed
+                        else : 
+                            if testing_state[1] > 0:
+                                reward = 10 # to be define relatively to the speed
+                            else :
+                                reward = 10 # te be define relatively to the position
+                                
+                    if next_state[1] < 0:
+                        best_next_action = 0
+                    else :
+                        best_next_action = 2
+                        
                 reward = torch.tensor([reward])
                 done = terminated or truncated
                 
