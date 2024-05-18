@@ -22,7 +22,7 @@ class DQNAgent(Agent):
         self.capacity = capacity
         self.use_heuristic_reward_function = heuristic_reward
         
-    def select_action(self, state, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 1000):
+    def select_action(self, state, iteration_number, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
         """
         Chooses an epsilon-greedy action given a state and its Q-values associated
         parameters : starting_epsilon, ending_epsilon, epsilon_decay allow to manage exploitation and exploration during action selection
@@ -44,19 +44,24 @@ class DQNAgent(Agent):
             transitions = list_transitions[i]
             batch = self.replay_buffer.Transition(*zip(*transitions))
 
-            non_final_mask = torch.tensor(tuple(map(lambda s:s is not None, batch.next_state)), dtype=torch.bool)
+            if len([s is not None for s in batch.next_state])==0 or len([s is not None for s in batch.next_state])==0 :
+                break
+            
+            non_final_mask = torch.tensor([s is not None for s in batch.next_state], dtype=torch.bool)
             non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
 
             states = torch.cat(batch.state)
             actions = torch.cat(batch.action)
             rewards = torch.cat(batch.reward)
-
+            
+            real_batch_size = states.shape[0] #in the case we can't have a full batch of size "batch_size"
+            
             state_action_values = self.fastupdateNet(states).gather(1, actions)
-            next_state_values = torch.zeros(batch_size)
+            next_state_values = torch.zeros(real_batch_size)
             
             with torch.no_grad():
                 next_state_values[non_final_mask] = self.targetNet(non_final_next_states).max(1).values
-
+                
             expected_state_action_values = (next_state_values * self.discount_factor) + rewards
 
             criterion = nn.MSELoss()
@@ -75,7 +80,7 @@ class DQNAgent(Agent):
         iteration_number = 0
         
         for i in range(number_episode):
-            
+            self.observations =[]
             iteration_number += 1
             
             self.replay_buffer = ReplayMemory(self.capacity, self.Transition)
@@ -84,7 +89,7 @@ class DQNAgent(Agent):
             
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
 
-            best_next_action = 100
+            best_next_action = 100 #initialize best action for initial state (no heurisitic reward function for first action)
             
             done = False
             while not done :
@@ -92,27 +97,21 @@ class DQNAgent(Agent):
                 action = self.select_action(state, iteration_number)
                 next_state, reward, terminated, truncated, _ = self.env.step(action.item())
                 
+                self.observations.append(next_state)
+                
                 if self.use_heuristic_reward_function :
                     testing_state = state.numpy()[0]
                     
                     if action == best_next_action: 
-                        if testing_state[0] > -0.5 :
-                            if testing_state[1] > 0:
-                                reward = 10 # to be define relatively to the position 
-                            else :
-                                reward = 10 # to be define relatively to the speed
-                        else : 
-                            if testing_state[1] > 0:
-                                reward = 10 # to be define relatively to the speed
-                            else :
-                                reward = 10 # te be define relatively to the position
-                                
+                        reward = self.heuristic_reward_function(testing_state)
+                    
+                    # predict the best action for next step (decide if we want to give a heuristic reward at next step)       
                     if next_state[1] < 0:
                         best_next_action = 0
                     else :
                         best_next_action = 2
                         
-                reward = torch.tensor([reward])
+                reward = torch.tensor([reward],dtype = torch.float32)
                 done = terminated or truncated
                 
                 if done :
@@ -123,6 +122,39 @@ class DQNAgent(Agent):
                 self.replay_buffer.push(state, action, next_state, reward)
 
                 state = next_state
-
+            
             self.update(batch_size, learning_rate)
+            
+    def heuristic_reward_function(self, state):
+        #give a reward if the action is "optimal" (in our opinion)
+        position = state[0]
+        speed = state[1]
         
+        #form env. documentation :
+        length_intervall_speed = 0.07 + 0.07
+        length_intervall_position = 0.6 + 1.2
+        mean_speed = 0
+        mean_position = -0.5 #lowest position is approx at this position
+               
+        if position > -0.5:
+            reward1 = abs((position-mean_position)/length_intervall_position)*1.1
+        else :
+            reward1 = abs((position-mean_position)/length_intervall_position)*0.7
+        
+        reward2 = abs((speed-mean_speed)/length_intervall_speed)
+        
+        reward=max(reward1,reward2)
+        
+        """
+        if position > -0.5 :
+            if speed > 0:
+                reward = abs((position-mean_position)/length_intervall_position)*10 # to be define relatively to the position 
+            else :
+                reward = abs((speed-mean_speed)/length_intervall_speed)*10 # to be define relatively to the speed
+        else : 
+            if speed > 0:
+                reward = abs((speed-mean_speed)/length_intervall_speed)*10 # to be define relatively to the speed
+            else :
+                reward = abs((position-mean_position)/length_intervall_position)*10 # te be define relatively to the position
+        """        
+        return reward
