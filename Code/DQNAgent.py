@@ -91,6 +91,32 @@ class DQNAgent(Agent):
             
         self.targetNet.load_state_dict(self.fastupdateNet.state_dict())
 
+    def updateRandomNetworkDistillation(self, batch_size, learning_rate):
+
+        list_transitions = self.replay_buffer.sample(batch_size)
+                    
+            for i in range(len(list_transitions)):
+                transitions = list_transitions[i]
+                batch = self.replay_buffer.Transition(*zip(*transitions))
+                states = torch.cat(batch.state)
+                
+                expected_state_action_values = self.RNDtargetNet(states)
+                predicted_state_action_values = self.RNDpredictorNet(states)
+
+                criterion = nn.MSELoss()
+                loss = criterion(predicted_state_action_values, expected_state_action_values)
+
+                optimizer = optim.AdamW(self.RNDpredictorNet.parameters(), lr=learning_rate, amsgrad=True)
+                optimizer.zero_grad()
+                
+                loss.backward()
+                torch.nn.utils.clip_grad_value_(self.RNDpredictorNet.parameters(), 100)
+                optimizer.step()
+                
+    def RND_reward(states):
+        
+        
+        
     def run(self, number_episode, batch_size, learning_rate):
 
         iteration_number = 0

@@ -36,7 +36,7 @@ class RND(nn.Module):
         """
         self.layer1 = nn.Linear(info_per_state, 64)
         self.layer2 = nn.Linear(64, 64)
-        self.layer3 = nn.Linear(64, number_actions)
+        self.layer3 = nn.Linear(64, 1)
         
     def forward(self, x):
         """
