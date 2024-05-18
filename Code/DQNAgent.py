@@ -65,7 +65,7 @@ class DQNAgent(Agent):
             
             non_final_mask = torch.tensor([s is not None for s in batch.next_state], dtype=torch.bool)
             non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
-
+            
             states = torch.cat(batch.state)
             actions = torch.cat(batch.action)
             rewards = torch.cat(batch.reward)
@@ -92,41 +92,43 @@ class DQNAgent(Agent):
         self.targetNet.load_state_dict(self.fastupdateNet.state_dict())
 
     def updateRandomNetworkDistillation(self, batch_size, learning_rate):
-
-        list_transitions = self.replay_buffer.sample(batch_size)
-                    
-            for i in range(len(list_transitions)):
-                transitions = list_transitions[i]
-                batch = self.replay_buffer.Transition(*zip(*transitions))
-                states = torch.cat(batch.state)
+        list_transitions = self.replay_buffer_RND_update.sample(batch_size)
+        optimizer = optim.AdamW(self.RNDpredictorNet.parameters(), lr=learning_rate, amsgrad=True)           
+        for i in range(len(list_transitions)):
+            transitions = list_transitions[i]
+            batch = self.replay_buffer.Transition(*zip(*transitions))
+            states = torch.cat(batch.state)
                 
-                expected_state_action_values = self.RNDtargetNet(states)
-                predicted_state_action_values = self.RNDpredictorNet(states)
+            expected_state_action_values = self.RNDtargetNet(states)
+            predicted_state_action_values = self.RNDpredictorNet(states)
 
-                criterion = nn.MSELoss()
-                loss = criterion(predicted_state_action_values, expected_state_action_values)
-
-                optimizer = optim.AdamW(self.RNDpredictorNet.parameters(), lr=learning_rate, amsgrad=True)
-                optimizer.zero_grad()
+            criterion = nn.MSELoss()
+            loss = criterion(predicted_state_action_values, expected_state_action_values)
+            
+            optimizer.zero_grad()
                 
-                loss.backward()
-                torch.nn.utils.clip_grad_value_(self.RNDpredictorNet.parameters(), 100)
-                optimizer.step()
-                
-    def RND_reward(states):
-        
-        
-        
+            loss.backward()
+            torch.nn.utils.clip_grad_value_(self.RNDpredictorNet.parameters(), 100)
+            optimizer.step()
+     
     def run(self, number_episode, batch_size, learning_rate):
 
         iteration_number = 0
         
+        # Memory of all transitions during training
+        if self.use_RND_reward:
+            total_replay_buffer_for_RND = ReplayMemory(self.capacity, self.Transition)
+        
         for i in range(number_episode):
-            self.observations =[]
+            self.observations = []
             iteration_number += 1
-            
+            abc=0
+            #creating memory for the update
             self.replay_buffer = ReplayMemory(self.capacity, self.Transition)
             
+            if self.use_RND_reward :
+                self.replay_buffer_RND_update = ReplayMemory(self.capacity, self.Transition)
+                
             state, initial_observation = self.env.reset()
             
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
@@ -152,19 +154,58 @@ class DQNAgent(Agent):
                         best_next_action = 0
                     else :
                         best_next_action = 2
-                        
-                reward = torch.tensor([reward],dtype = torch.float32)
+
                 done = terminated or truncated
                 
                 if done :
                     next_state = None
                 else :
                     next_state = torch.tensor(next_state, dtype = torch.float32).unsqueeze(0)
+
+                state_for_RND = state
+                next_state_for_RND = next_state
                 
+                if self.use_RND_reward and abc>1 :
+                    #computing mean/std of states over all transitions during training :
+                    transitions = list(total_replay_buffer_for_RND.memory)
+                    past_data = total_replay_buffer_for_RND.Transition(*zip(*transitions))
+                    past_states = torch.stack(past_data.state) #extract state from the memory of transitions + convert list of tensor to a single tensor
+                    mean_states = past_states.mean(dim=0)
+                    
+                    std_state = past_states.std(dim=0)
+                    
+                    state_for_RND = (state - mean_states)/std_state
+                    
+                    if next_state == None :
+                        next_state_for_RND = None
+                    else :
+                        next_state_for_RND = (next_state - mean_states)/std_state
+
+                    if iteration_number > 5:
+                        reward_from_MSE_nn = ((self.RNDpredictorNet(state_for_RND)-self.RNDtargetNet(state_for_RND)).item())**2
+
+                        transitions = list(self.replay_buffer_RND_update.memory)
+                        past_data = self.replay_buffer_RND_update.Transition(*zip(*transitions))
+                        past_reward = torch.stack((*past_data.reward,torch.tensor([reward_from_MSE_nn])))
+                        mean_reward = past_reward.mean(dim=0)
+                        std_reward = past_reward.std(dim=0)
+                        
+                        reward = (reward_from_MSE_nn-mean_reward)/std_reward
+                
+                reward = torch.tensor([reward],dtype = torch.float32)
+                               
                 self.replay_buffer.push(state, action, next_state, reward)
+                
+                if self.use_RND_reward:
+                    total_replay_buffer_for_RND.push(state, action, next_state, reward)
+                    self.replay_buffer_RND_update.push(state_for_RND, action, next_state_for_RND, reward)
 
                 state = next_state
-            
+                abc+=1
+            # Updating neural net
+            if self.use_RND_reward:
+                self.updateRandomNetworkDistillation(batch_size, learning_rate)
+                
             self.update(batch_size, learning_rate)
             
     def heuristic_reward_function(self, state):
