@@ -1,5 +1,5 @@
 from AbstractAgent import Agent
-from DQN import DQN
+from DQN import DQN, RND
 from replay_buffer import ReplayMemory
 import numpy as np
 import math
@@ -11,17 +11,33 @@ from collections import namedtuple, deque
 
 class DQNAgent(Agent):
     
-    def __init__(self, env, discount_factor = 0.99, capacity = 10000, heuristic_reward = False):
+    def __init__(self, env, discount_factor = 0.99, capacity = 10000, heuristic_reward = False, RND_reward = False):
+        
+        if heuristic_reward and RND_reward:
+            raise ValueError("can't use both : heuristic reward function and RND reward")
+        
         super().__init__(env)
-        self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
-        self.discount_factor = discount_factor
         self.observations = []
+
+        # DQN classics
+        self.discount_factor = discount_factor
         self.targetNet = DQN()
         self.fastupdateNet = DQN()
+
+        # replay buffer
+        self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
         self.replay_buffer = ReplayMemory(capacity, self.Transition)
         self.capacity = capacity
-        self.use_heuristic_reward_function = heuristic_reward
         
+        # heuristic reward function :
+        self.use_heuristic_reward_function = heuristic_reward
+
+        # random network distillation :
+        self.use_RND_reward = RND_reward
+        if RND_reward:
+            self.RNDtargetNet = RND() # consider same structure of neural net between target and predictor. (later can be changed)
+            self.RNDpredictorNet = RND()
+              
     def select_action(self, state, iteration_number, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
         """
         Chooses an epsilon-greedy action given a state and its Q-values associated
