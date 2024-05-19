@@ -191,6 +191,7 @@ class DQNAgent(Agent):
                         std_reward = past_reward.std(dim=0)
                         
                         reward = (reward_from_MSE_nn-mean_reward)/std_reward
+                        #reward = torch.clamp(reward, min=-5, max=5)
                 
                 reward = torch.tensor([reward],dtype = torch.float32)
                                
