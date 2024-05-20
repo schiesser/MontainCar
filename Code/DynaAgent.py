@@ -14,30 +14,36 @@ class DynaAgent(Agent):
 
         interval_position = [-1.2, 0.6]
         interval_speed = [-0.07, 0.007]
-        
+
 
         #think better to have nb_interval instead of a step : if use step -> use arange...
         self.discretization_position = np.linspace(interval_position[0], interval_position[1], self.nb_interval_position[0]+1)
         self.discretization_speed = np.linspace(interval_v[0], interval_speed[1], self.nb_interval_speed[1]+1)
 
-        #attention indexing !!! discuss tomorrow
+        # Tabular values :
         self.P_estimate = np.ones((nb_states, nb_actions, nb_states))*(1/nb_states) #uniform at initialization
         self.R_estimate = np.zeros((nb_states, nb_actions))
         self.Q = np.zeros((nb_states, nb_actions))
         
+        
     def found_indice_bin(state):
-    
+        
+        #extract position and speed form state
         position = state[0]
         speed = state[1]
 
+        #give the indice of the interval that contains the position observed
         indice_position = np.digitize(position, self.discretization_position)-1 #indices between 0 and (nb_interval-1), directly good to slice numpy vector !
+        #give the indice of the interval that contains the speed observed
         indice_speed = np.digitize(speed, self.discretization_speed)-1
 
+        #we need to get the indice of the state, which combine position and speed. Arbitraly i choose an order to store them :
         correct_indice = indice_position*self.nb_interval_speed + indice_speed
         
+        #get the correct indice of the state : can be use to find correct place in array with "nb_states" dimension (Q, P_estimate, R_estimate)
         return correct_indice
         
-    def found_state(correct_indice): #not sure it will be usefull
+    def found_state(correct_indice): #not sure it will be usefull, do the inverse of found_indice_bin : get position/speed interval from and indice
         
         indice_speed = correct_indice % self.nb_interval_speed
         indice_position = int((correct_indice - indice_speed)/self.nb_interval_speed)
