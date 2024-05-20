@@ -23,6 +23,7 @@ class DQNAgent(Agent):
         self.discount_factor = discount_factor
         self.targetNet = DQN()
         self.fastupdateNet = DQN()
+        self.targetNet.load_state_dict(self.fastupdateNet.state_dict()) #we want to have to same initial parameters for both NN.
 
         # replay buffer
         self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
@@ -35,7 +36,8 @@ class DQNAgent(Agent):
         # random network distillation :
         self.use_RND_reward = RND_reward
         if RND_reward:
-            self.RNDtargetNet = RND() # consider same structure of neural net between target and predictor. (later can be changed)
+            # the 2 networks have different parameters at initilization ! (At moment i let default initilisation)
+            self.RNDtargetNet = RND() 
             self.RNDpredictorNet = RND()
               
     def select_action(self, state, iteration_number, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
@@ -44,78 +46,106 @@ class DQNAgent(Agent):
         parameters : starting_epsilon, ending_epsilon, epsilon_decay allow to manage exploitation and exploration during action selection
         epsilon is decresing relatively to the number of iterations
         """
-        epsilon = ending_epsilon + (starting_epsilon - ending_epsilon) * math.exp(-iteration_number/epsilon_decay) #reason : more exploration at beginning, and increase exploitation with iteration
+        # reason : more exploration at beginning, and increase exploitation with iteration
+        epsilon = ending_epsilon + (starting_epsilon - ending_epsilon) * math.exp(-iteration_number/epsilon_decay) #
         
         if np.random.uniform(0, 1) > epsilon:
             with torch.no_grad(): #doesn't track the operation for the training
-                return self.fastupdateNet(state).max(1).indices.view(1, 1)
+                return self.fastupdateNet(state).max(1).indices.view(1, 1) # choose current best action
         else :
-            return torch.tensor([[self.action_space.sample()]], dtype=torch.long)
+            return torch.tensor([[self.action_space.sample()]], dtype=torch.long) # choose a random action
         
     def update(self, batch_size, learning_rate):
 
+        # split all transitions randomly into lists of batch_size length (except last list...)
         list_transitions = self.replay_buffer.sample(batch_size)
-                
-        for i in range(len(list_transitions)):
-            transitions = list_transitions[i]
-            batch = self.replay_buffer.Transition(*zip(*transitions))
 
-            if len([s is not None for s in batch.next_state])==0 or len([s is not None for s in batch.next_state])==0 :
+        #loop over lists of transitions for a batch update
+        for i in range(len(list_transitions)): 
+            transitions = list_transitions[i] 
+            # reorganize the storage of the transitions : https://stackoverflow.com/a/19343/3343043
+            batch = self.replay_buffer.Transition(*zip(*transitions)) 
+
+            # break loop if a batch is composed only of a ending state
+            # possible like this because only the last batch is not of length < batch_size
+            # (not sure it's working yet)
+            if len(batch.next_state)==0 : 
                 break
             
+            #deal with ending state (which has "None" value)
             non_final_mask = torch.tensor([s is not None for s in batch.next_state], dtype=torch.bool)
             non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
             
+            #extract states, actions, rewards from the batch
             states = torch.cat(batch.state)
             actions = torch.cat(batch.action)
             rewards = torch.cat(batch.reward)
             
-            real_batch_size = states.shape[0] #in the case we can't have a full batch of size "batch_size"
+            #for the last batch : in the case we can't have a full batch of size "batch_size"
+            real_batch_size = states.shape[0] 
             
+            # Q values of each (s,a) of the batch (relatively to fastupdateNet)
             state_action_values = self.fastupdateNet(states).gather(1, actions)
-            next_state_values = torch.zeros(real_batch_size)
             
+            # initialize a torch for the storage of the current optimal action (relatively to targetNet)
+            next_state_values = torch.zeros(real_batch_size)
             with torch.no_grad():
+                #store the current optimal action (relatively to targetNet)
                 next_state_values[non_final_mask] = self.targetNet(non_final_next_states).max(1).values
-                
+            
+            #from Bellman...
             expected_state_action_values = (next_state_values * self.discount_factor) + rewards
 
+            #compute loss with mean square error criterion
             criterion = nn.MSELoss()
             loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
 
+            #optimize the parameters of fastupdateNet :
             optimizer = optim.AdamW(self.fastupdateNet.parameters(), lr = learning_rate, amsgrad=True)
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_value_(self.fastupdateNet.parameters(), 100) # don't understand the reason of the usage
+            torch.nn.utils.clip_grad_value_(self.fastupdateNet.parameters(), 100) # clip values of parameter between -100 and 100 : prevent exploding gradient
             optimizer.step()
             
+        # paste the parameter of fastupdateNet that were optimize by few batchs to the targetNet
         self.targetNet.load_state_dict(self.fastupdateNet.state_dict())
 
     def updateRandomNetworkDistillation(self, batch_size, learning_rate):
+
+        # split all transitions randomly into lists of batch_size length (except last list...)
         list_transitions = self.replay_buffer_RND_update.sample(batch_size)
-        optimizer = optim.AdamW(self.RNDpredictorNet.parameters(), lr=learning_rate, amsgrad=True)           
+
+        #loop over lists of transitions for a batch update
         for i in range(len(list_transitions)):
             transitions = list_transitions[i]
+            # reorganize the storage of the transitions
             batch = self.replay_buffer.Transition(*zip(*transitions))
+            
+            # extract states form the batch of transition
             states = torch.cat(batch.state)
-                
+
+            # compute output of both neural
             expected_state_action_values = self.RNDtargetNet(states)
             predicted_state_action_values = self.RNDpredictorNet(states)
 
+            # compute the loss using mean square error
+            # loss is : how different are the 2 neural net for these given states
             criterion = nn.MSELoss()
             loss = criterion(predicted_state_action_values, expected_state_action_values)
-            
+
+            # optimize parameter of RNDpredictor
+            # goal : to be close to the other neural for the actions that have already been observed !
+            optimizer = optim.AdamW(self.RNDpredictorNet.parameters(), lr=learning_rate, amsgrad=True)
             optimizer.zero_grad()
-                
             loss.backward()
-            torch.nn.utils.clip_grad_value_(self.RNDpredictorNet.parameters(), 100)
+            torch.nn.utils.clip_grad_value_(self.RNDpredictorNet.parameters(), 100) # clip values of parameter between -100 and 100 : prevent exploding gradient
             optimizer.step()
      
     def run(self, number_episode, batch_size, learning_rate):
 
         iteration_number = 0
         
-        # Memory of all transitions during training
+        # Memory of all transitions during training (usefull for the RND : need to compute mean/std of state)
         if self.use_RND_reward:
             total_replay_buffer_for_RND = ReplayMemory(self.capacity, self.Transition)
         
@@ -211,34 +241,29 @@ class DQNAgent(Agent):
             
     def heuristic_reward_function(self, state):
         #give a reward if the action is "optimal" (in our opinion)
+
+        #extract position and speed for a given state
         position = state[0]
         speed = state[1]
         
-        #form env. documentation :
+        #computing few things using the documentation of the environnement:
         length_intervall_speed = 0.07 + 0.07
         length_intervall_position = 0.6 + 1.2
         mean_speed = 0
         mean_position = -0.5 #lowest position is approx at this position
                
+        # compute reward relatively to the positon 
+        # basically a normalization is done
+        # factor 1.1 and 0.7 consider that the mean position is closer to the left boundary than the right booundary(goal)
         if position > -0.5:
             reward1 = abs((position-mean_position)/length_intervall_position)*1.1
         else :
             reward1 = abs((position-mean_position)/length_intervall_position)*0.7
-        
+
+        #compute a reward relatively to the speed
         reward2 = abs((speed-mean_speed)/length_intervall_speed)
-        
+
+        #keep max reward
         reward=max(reward1,reward2)
-        
-        """
-        if position > -0.5 :
-            if speed > 0:
-                reward = abs((position-mean_position)/length_intervall_position)*10 # to be define relatively to the position 
-            else :
-                reward = abs((speed-mean_speed)/length_intervall_speed)*10 # to be define relatively to the speed
-        else : 
-            if speed > 0:
-                reward = abs((speed-mean_speed)/length_intervall_speed)*10 # to be define relatively to the speed
-            else :
-                reward = abs((position-mean_position)/length_intervall_position)*10 # te be define relatively to the position
-        """        
+     
         return reward
