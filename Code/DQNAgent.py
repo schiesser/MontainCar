@@ -47,7 +47,7 @@ class DQNAgent(Agent):
         epsilon is decresing relatively to the number of iterations
         """
         # reason : more exploration at beginning, and increase exploitation with iteration
-        epsilon = ending_epsilon + (starting_epsilon - ending_epsilon) * math.exp(-iteration_number/epsilon_decay) #
+        epsilon = ending_epsilon + (starting_epsilon - ending_epsilon) * math.exp(-iteration_number/epsilon_decay)
         
         if np.random.uniform(0, 1) > epsilon:
             with torch.no_grad(): #doesn't track the operation for the training
