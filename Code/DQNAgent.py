@@ -144,12 +144,17 @@ class DQNAgent(Agent):
     def run(self, number_episode, batch_size, learning_rate):
 
         iteration_number = 0
+
+        environnement_reward = np.zeros((number_episode))
+        total_reward = np.zeros((number_episode))
         
         # Memory of all transitions during training (usefull for the RND : need to compute mean/std of state)
         if self.use_RND_reward:
             total_replay_buffer_for_RND = ReplayMemory(self.capacity, self.Transition)
-        
+
         for i in range(number_episode):
+            environnement_reward_ep = 0
+            total_reward_ep = 0
             self.observations = []
             iteration_number += 1
             abc=0
@@ -170,20 +175,23 @@ class DQNAgent(Agent):
                 
                 action = self.select_action(state, iteration_number)
                 next_state, reward, terminated, truncated, _ = self.env.step(action.item())
+                environnement_reward_ep += reward
                 
                 self.observations.append(next_state)
                 
                 if self.use_heuristic_reward_function :
                     testing_state = state.numpy()[0]
                     
-                    if action == best_next_action: 
-                        reward = self.heuristic_reward_function(testing_state)
+                    if action == best_next_action:
+                        reward += self.heuristic_reward_function(testing_state)*10
                     
                     # predict the best action for next step (decide if we want to give a heuristic reward at next step)       
                     if next_state[1] < 0:
                         best_next_action = 0
                     else :
                         best_next_action = 2
+                
+                total_reward_ep += reward
 
                 done = terminated or truncated
                 
@@ -233,11 +241,16 @@ class DQNAgent(Agent):
 
                 state = next_state
                 abc+=1
+                environnement_reward[i] = environnement_reward_ep
+                total_reward[i] = total_reward_ep
+                
             # Updating neural net
             if self.use_RND_reward:
                 self.updateRandomNetworkDistillation(batch_size, learning_rate)
                 
             self.update(batch_size, learning_rate)
+        auxiliary_reward = environnement_reward - total_reward
+        return environnement_reward, auxiliary_reward, total_reward
             
     def heuristic_reward_function(self, state):
         #give a reward if the action is "optimal" (in our opinion)
@@ -262,8 +275,7 @@ class DQNAgent(Agent):
 
         #compute a reward relatively to the speed
         reward2 = abs((speed-mean_speed)/length_intervall_speed)
-
         #keep max reward
         reward=max(reward1,reward2)
-     
+        
         return reward
