@@ -10,13 +10,13 @@ class Agent:
         self.env = env
     
     def select_action(self, state):
-        pass
+        raise NotImplementedError
         
     def observe(self, state, action, next_state, reward):
-        pass
+        raise NotImplementedError
         
     def update(self):
-        pass
+        raise NotImplementedError
 
     def run(self):
-        pass
+        raise NotImplementedError
