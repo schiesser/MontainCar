@@ -69,7 +69,6 @@ class DynaAgent(Agent):
         """
         # reason : more exploration at beginning, and increase exploitation with iteration
         epsilon = ending_epsilon + (starting_epsilon - ending_epsilon) * math.exp(-iteration_number/epsilon_decay)
-
         indice_state = self.found_indice_bin(state) 
         
         if np.random.uniform(0, 1) > epsilon:
@@ -99,17 +98,18 @@ class DynaAgent(Agent):
 
     def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
         for episode in range(num_episodes):
-            state = self.env.reset()
+            state, _ = self.env.reset()
             done = False
             while not done:
-                action = self.select_action(state=state, 
+                action = int(self.select_action(state=state, 
                                             iteration_number=episode, 
-                                            starting_epsilon=starting_epsilon, 
+                                            starting_epsilon=starting_epsilon,
                                             ending_epsilon=ending_epsilon, 
                                             epsilon_decay=epsilon_decay
-                                            )
-                next_state, reward, done, _ = self.env.step(action)
+                                            ))
+                next_state, reward, terminated, truncated, _ = self.env.step(action)
                 self.observe(state, action, next_state, reward, learning_rate)
+                done = terminated or truncated
                 self.update(iteration_number=episode,
                             starting_epsilon=starting_epsilon, 
                             ending_epsilon=ending_epsilon, 
