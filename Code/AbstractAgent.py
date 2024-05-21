@@ -8,7 +8,7 @@ class Agent:
         self.action_space = env.action_space
         self.observations = []
         self.env = env
-        
+    
     def select_action(self, state):
         pass
         
