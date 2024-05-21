@@ -4,8 +4,11 @@ import numpy as np
 import math
 import random
 import torch
+import datetime
 import torch.nn as nn
 import torch.optim as optim
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 
 class DynaAgent(Agent):
     
@@ -35,6 +38,11 @@ class DynaAgent(Agent):
         self.P_estimate = np.ones((self.nb_states, self.nb_actions, self.nb_states)) / (self.nb_states * self.nb_actions)
         self.R_estimate = np.zeros((self.nb_states, self.nb_actions))
         self.Q = np.zeros((self.nb_states, self.nb_actions))
+
+        # Writer for logging purpose
+        logdir = f'./runs/discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+        self.writer = SummaryWriter(log_dir=logdir)
+        print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
         
         
     def found_indice_bin(self, state):
@@ -97,10 +105,14 @@ class DynaAgent(Agent):
 
 
     def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
-        for episode in range(num_episodes):
+        total_reward = []
+        for episode in tqdm(range(num_episodes)):
+            rew_ep = 0
+            num_steps = 0
             state, _ = self.env.reset()
             done = False
             while not done:
+                num_steps = num_steps + 1
                 action = int(self.select_action(state=state, 
                                             iteration_number=episode, 
                                             starting_epsilon=starting_epsilon,
@@ -110,10 +122,14 @@ class DynaAgent(Agent):
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
                 self.observe(state, action, next_state, reward, learning_rate)
                 done = terminated or truncated
+                rew_ep = rew_ep + reward
                 self.update(iteration_number=episode,
                             starting_epsilon=starting_epsilon, 
                             ending_epsilon=ending_epsilon, 
                             epsilon_decay=epsilon_decay
                             )
                 state = next_state
-            print(f"Episode {episode + 1} completed.")
+            self.writer.add_scalar('Reward/Episode', rew_ep, episode)
+            self.writer.add_scalar('Nb_steps/Episode', num_steps, episode)
+            self.writer.flush()
+        return total_reward
