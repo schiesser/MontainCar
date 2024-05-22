@@ -9,10 +9,12 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+from replay_buffer import ReplayMemory
+from collections import namedtuple
 
 class DynaAgent(Agent):
     
-    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 100):
+    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 100, capacity = 10000):
         super().__init__(env)
 
         # Environment values
@@ -40,9 +42,13 @@ class DynaAgent(Agent):
         self.Q = np.zeros((self.nb_states, self.nb_actions))
 
         # Writer for logging purpose
-        logdir = f'./runs/discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+        logdir = f'./runs/after@discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
         self.writer = SummaryWriter(log_dir=logdir)
         print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
+
+        # Replay buffer
+        self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
+        self.replay_buffer = ReplayMemory(capacity, self.Transition)
         
         
     def found_indice_bin(self, state):
@@ -61,10 +67,10 @@ class DynaAgent(Agent):
     def found_state(self, correct_indice): #not sure it will be usefull, do the inverse of found_indice_bin : get position/speed interval from and indice
         
         indice_speed = correct_indice % self.nb_interval_speed
-        indice_position = int((correct_indice - indice_speed)/self.nb_interval_speed)
+        indice_position = int((correct_indice - indice_speed) / self.nb_interval_speed)
 
-        position = np.array([self.discretization_position[indice_position], self.discretization_position[indice_position]+1])
-        speed = np.array([self.discretization_speed[indice_speed], self.discretization_speed[indice_speed]+1])
+        position = np.array([self.discretization_position[indice_position], self.discretization_position[indice_position] + 1])
+        speed = np.array([self.discretization_speed[indice_speed], self.discretization_speed[indice_speed] + 1])
 
         return position,speed
 
@@ -88,20 +94,30 @@ class DynaAgent(Agent):
     def observe(self, state, action, next_state, reward, learning_rate):
         index_s = self.found_indice_bin(state)
         index_s_prime = self.found_indice_bin(next_state)
+
+        probabilities = self.P_estimate[index_s][action]
+        expected_reward = self.R_estimate[index_s][action]
+        future_rewards = np.max(self.Q, axis=-1)
+        expected_future_reward = np.sum(probabilities * future_rewards)
+        self.Q[index_s][action] = expected_reward + self.discount_factor * expected_future_reward
+
         self.R_estimate[index_s][action] = (1 - learning_rate) * self.R_estimate[index_s][action] + learning_rate * reward
         self.P_estimate[index_s][action][index_s_prime] = (1 - learning_rate) * self.P_estimate[index_s][action][index_s_prime] + learning_rate
         
+
     def update(self, iteration_number, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
-        for _ in range(self.k_updates):
-            s = np.random.randint(self.nb_states)
-            a = np.random.randint(self.nb_actions)
+        list_transitions = self.replay_buffer.sample(self.k_updates, dyna=True)
+
+        for transition in list_transitions:
+            s = self.found_indice_bin(transition.state)
+            a = transition.action
+
             s_prime_probs = self.P_estimate[s][a]
             expected_reward = self.R_estimate[s][a]
+
             future_rewards = np.max(self.Q, axis=-1)
             expected_future_reward = np.sum(s_prime_probs * future_rewards)
             self.Q[s][a] = expected_reward + self.discount_factor * expected_future_reward
-
-            # epsilon = ending_epsilon + (starting_epsilon - ending_epsilon) * math.exp(-iteration_number/epsilon_decay)
 
 
     def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
@@ -109,6 +125,7 @@ class DynaAgent(Agent):
         for episode in tqdm(range(num_episodes)):
             rew_ep = 0
             num_steps = 0
+            self.observations = []
             state, _ = self.env.reset()
             done = False
             while not done:
@@ -123,11 +140,13 @@ class DynaAgent(Agent):
                 self.observe(state, action, next_state, reward, learning_rate)
                 done = terminated or truncated
                 rew_ep = rew_ep + reward
+                self.observations.append(next_state)
                 self.update(iteration_number=episode,
                             starting_epsilon=starting_epsilon, 
                             ending_epsilon=ending_epsilon, 
                             epsilon_decay=epsilon_decay
                             )
+                self.replay_buffer.push(state, action, next_state, reward)
                 state = next_state
             self.writer.add_scalar('Reward/Episode', rew_ep, episode)
             self.writer.add_scalar('Nb_steps/Episode', num_steps, episode)
