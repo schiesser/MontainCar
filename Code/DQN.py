@@ -27,16 +27,16 @@ class DQN(nn.Module):
 
 class RND(nn.Module):
 
-    def __init__(self, info_per_state = 2):
+    def __init__(self, info_per_state = 2, nb_neurons = 16):
         super(RND, self).__init__()
         """
         input of neural : what characterizes a state
         output : one Q-value per possible action 
         !!! change later : consider number of hidden layers and number of neurons as hyperparameters
         """
-        self.layer1 = nn.Linear(info_per_state, 16)
-        self.layer2 = nn.Linear(16, 16)
-        self.layer3 = nn.Linear(16, 1)
+        self.layer1 = nn.Linear(info_per_state, nb_neurons)
+        self.layer2 = nn.Linear(nb_neurons, nb_neurons)
+        self.layer3 = nn.Linear(nb_neurons, 1)
         
     def forward(self, x):
         """
