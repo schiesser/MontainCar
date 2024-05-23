@@ -95,9 +95,9 @@ class DynaAgent(Agent):
         indice_state = self.found_indice_bin(state) 
         
         if np.random.uniform(0, 1) > epsilon:
-            return np.max(self.Q[indice_state,:])
+            return int(np.argmax(self.Q[indice_state,:]))
         else :
-            return np.random.choice(self.Q[indice_state,:])
+            return random.randint(0, self.nb_actions - 1)
     
         
     def observe(self, state, action, next_state, reward, learning_rate):
@@ -139,16 +139,20 @@ class DynaAgent(Agent):
             num_steps = 0
             self.observations = []
             state, _ = self.env.reset()
+            if not self.should_log:
+                self.env.render()
             done = False
             while not done:
                 num_steps = num_steps + 1
-                action = int(self.select_action(state=state, 
+                action = self.select_action(state=state, 
                                             iteration_number=episode, 
                                             starting_epsilon=starting_epsilon,
                                             ending_epsilon=ending_epsilon, 
                                             epsilon_decay=epsilon_decay
-                                            ))
+                                            )
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
+                if not self.should_log:
+                    self.env.render()
                 self.observe(state, action, next_state, reward, learning_rate)
                 if terminated:
                     print(f"Episode {episode} is done successfully !!!!!!")
