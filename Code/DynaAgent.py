@@ -21,7 +21,7 @@ class DynaAgent(Agent):
         # Environment values
         self.nb_actions = 3
         self.interval_position = [-1.2, 0.6]
-        self.interval_speed = [-0.07, 0.007]
+        self.interval_speed = [-0.07, 0.07]
 
         # Initialization variables
         self.k_updates = k_updates
@@ -30,8 +30,8 @@ class DynaAgent(Agent):
         self.should_log = should_log
 
         # Calculate the number of states per interval/velocity and number of states
-        self.nb_interval_position = int(abs(self.interval_position[0] - self.interval_position[1]) / discr_step[0] )
-        self.nb_interval_speed = int(abs(self.interval_speed[0] - self.interval_speed[1]) / discr_step[1] )
+        self.nb_interval_position = int(abs(self.interval_position[0] - self.interval_position[1]) / discr_step[0] ) + 1
+        self.nb_interval_speed = int(abs(self.interval_speed[0] - self.interval_speed[1]) / discr_step[1] ) + 1
         self.nb_states = self.nb_interval_position * self.nb_interval_speed
 
         # Discretization of position and speed
@@ -42,6 +42,12 @@ class DynaAgent(Agent):
         self.P_estimate = np.ones((self.nb_states, self.nb_actions, self.nb_states)) / (self.nb_states * self.nb_actions)
         self.R_estimate = np.zeros((self.nb_states, self.nb_actions))
         self.Q = np.zeros((self.nb_states, self.nb_actions))
+
+        print(f"-----------variables--------")
+        print(f"number of positions = {self.nb_interval_position}")
+        print(f"number of velocity = {self.nb_interval_speed}")
+        print(f"number of states = {self.nb_states}")
+        print(f"-----------------------------------------")
 
         # Writer for logging purpose
         if self.should_log:
@@ -78,7 +84,7 @@ class DynaAgent(Agent):
         return position,speed
 
 
-    def select_action(self, state, iteration_number, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
+    def select_action(self, state, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
         """
         Chooses an epsilon-greedy action given a state and its Q-values associated
         parameters : starting_epsilon, ending_epsilon, epsilon_decay allow to manage exploitation and exploration during action selection
@@ -108,7 +114,7 @@ class DynaAgent(Agent):
         self.P_estimate[index_s][action][index_s_prime] = (1 - learning_rate) * self.P_estimate[index_s][action][index_s_prime] + learning_rate
         
 
-    def update(self, iteration_number, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
+    def update(self, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
         list_transitions = self.replay_buffer.sample(self.k_updates, dyna=True)
 
         for transition in list_transitions:
@@ -123,7 +129,7 @@ class DynaAgent(Agent):
             self.Q[s][a] = expected_reward + self.discount_factor * expected_future_reward
 
 
-    def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
+    def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
         total_reward = []
         tasksolve = 0
         for episode in tqdm(range(num_episodes)):
