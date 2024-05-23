@@ -30,8 +30,8 @@ class DynaAgent(Agent):
         self.should_log = should_log
 
         # Calculate the number of states per interval/velocity and number of states
-        self.nb_interval_position = int(abs(self.interval_position[0] - self.interval_position[1]) / discr_step[0] ) + 1
-        self.nb_interval_speed = int(abs(self.interval_speed[0] - self.interval_speed[1]) / discr_step[1] ) + 1
+        self.nb_interval_position = int(abs(self.interval_position[0] - self.interval_position[1]) / discr_step[0] )
+        self.nb_interval_speed = int(abs(self.interval_speed[0] - self.interval_speed[1]) / discr_step[1] )
         self.nb_states = self.nb_interval_position * self.nb_interval_speed
 
         # Discretization of position and speed
@@ -47,17 +47,21 @@ class DynaAgent(Agent):
         print(f"number of positions = {self.nb_interval_position}")
         print(f"number of velocity = {self.nb_interval_speed}")
         print(f"number of states = {self.nb_states}")
+        print(f"self.discretization_position = {self.discretization_position}")
+        print(f"self.discretization_speed = {self.discretization_speed}")
         print(f"-----------------------------------------")
 
         # Writer for logging purpose
         if self.should_log:
-            logdir = f'./runs/after@discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+            logdir = f'./runs/new@discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
             self.writer = SummaryWriter(log_dir=logdir)
             print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
 
         # Replay buffer
         self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
         self.replay_buffer = ReplayMemory(capacity, self.Transition)
+
+        self.freq_actions = [0, 0, 0]
         
         
     def found_indice_bin(self, state):
@@ -95,9 +99,9 @@ class DynaAgent(Agent):
         indice_state = self.found_indice_bin(state) 
         
         if np.random.uniform(0, 1) > epsilon:
-            return int(np.argmax(self.Q[indice_state,:]))
+            return np.argmax(self.Q[indice_state,:])
         else :
-            return random.randint(0, self.nb_actions - 1)
+            return np.random.choice(np.array([0, 1, 2]))
     
         
     def observe(self, state, action, next_state, reward, learning_rate):
@@ -115,18 +119,19 @@ class DynaAgent(Agent):
         
 
     def update(self, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
-        list_transitions = self.replay_buffer.sample(self.k_updates, dyna=True)
+        if iteration_number > self.k_updates - 1:
+            list_transitions = self.replay_buffer.sample(self.k_updates, dyna=True)
 
-        for transition in list_transitions:
-            s = self.found_indice_bin(transition.state)
-            a = transition.action
+            for transition in list_transitions:
+                s = self.found_indice_bin(transition.state)
+                a = transition.action
 
-            s_prime_probs = self.P_estimate[s][a]
-            expected_reward = self.R_estimate[s][a]
+                s_prime_probs = self.P_estimate[s][a]
+                expected_reward = self.R_estimate[s][a]
 
-            future_rewards = np.max(self.Q, axis=-1)
-            expected_future_reward = np.sum(s_prime_probs * future_rewards)
-            self.Q[s][a] = expected_reward + self.discount_factor * expected_future_reward
+                future_rewards = np.max(self.Q, axis=-1)
+                expected_future_reward = np.sum(s_prime_probs * future_rewards)
+                self.Q[s][a] = expected_reward + self.discount_factor * expected_future_reward
 
 
     def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
@@ -150,6 +155,7 @@ class DynaAgent(Agent):
                                             ending_epsilon=ending_epsilon, 
                                             epsilon_decay=epsilon_decay
                                             )
+                self.freq_actions[action] += 1
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
                 if not self.should_log:
                     self.env.render()
