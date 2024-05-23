@@ -239,7 +239,7 @@ class DQNAgent(Agent):
                     previous_mean_states = mean_states
                     mean_states = mean_states + (state-mean_states)/(nb_transition_tot+1)
                     std_states = ((state-previous_mean_states)*(state-mean_states)+std_states)/nb_transition_tot
-   
+                    
                     state_for_RND = (state - mean_states)/std_states
                     
                     if next_state == None :
@@ -253,8 +253,8 @@ class DQNAgent(Agent):
                     mean_reward = mean_reward + (reward_from_MSE_nn-mean_reward)/(nb_transition_tot+1)
                     std_reward = ((reward_from_MSE_nn-previous_mean_reward)*(reward_from_MSE_nn-mean_reward)+std_reward)/nb_transition_tot  
                     rnd_reward = (reward_from_MSE_nn-mean_reward)/std_reward
-                    rnd_reward = torch.clamp(rnd_reward, min=-5, max= 5).item()
-                    reward = reward+abs(rnd_reward)*self.global_reward_factor
+                    rnd_reward = torch.clamp(rnd_reward*self.global_reward_factor, min=-5, max= 5).item()
+                    reward = reward+abs(rnd_reward)
                     
                 total_reward_ep += reward
                 
