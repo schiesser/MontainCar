@@ -4,6 +4,7 @@ import numpy as np
 import math
 import random
 import torch
+import time
 import datetime
 import torch.nn as nn
 import torch.optim as optim
@@ -14,7 +15,7 @@ from collections import namedtuple
 
 class DynaAgent(Agent):
     
-    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 100, capacity = 10000):
+    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 1, capacity = 10000, should_log = True):
         super().__init__(env)
 
         # Environment values
@@ -26,6 +27,7 @@ class DynaAgent(Agent):
         self.k_updates = k_updates
         self.discr_step = discr_step
         self.discount_factor = discount_factor
+        self.should_log = should_log
 
         # Calculate the number of states per interval/velocity and number of states
         self.nb_interval_position = int(abs(self.interval_position[0] - self.interval_position[1]) / discr_step[0] )
@@ -42,9 +44,10 @@ class DynaAgent(Agent):
         self.Q = np.zeros((self.nb_states, self.nb_actions))
 
         # Writer for logging purpose
-        logdir = f'./runs/after@discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
-        self.writer = SummaryWriter(log_dir=logdir)
-        print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
+        if self.should_log:
+            logdir = f'./runs/after@discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+            self.writer = SummaryWriter(log_dir=logdir)
+            print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
 
         # Replay buffer
         self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
@@ -122,7 +125,10 @@ class DynaAgent(Agent):
 
     def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150):
         total_reward = []
+        tasksolve = 0
         for episode in tqdm(range(num_episodes)):
+            start_time = time.time()
+            update_time_total = 0
             rew_ep = 0
             num_steps = 0
             self.observations = []
@@ -138,17 +144,30 @@ class DynaAgent(Agent):
                                             ))
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
                 self.observe(state, action, next_state, reward, learning_rate)
+                if terminated:
+                    print(f"Episode {episode} is done successfully !!!!!!")
                 done = terminated or truncated
+                if reward < -1.0:
+                    print(f"reward = {reward} type = {type(reward)}")
                 rew_ep = rew_ep + reward
+                total_reward.append(rew_ep)
                 self.observations.append(next_state)
+                update_time_start = time.time()
                 self.update(iteration_number=episode,
                             starting_epsilon=starting_epsilon, 
                             ending_epsilon=ending_epsilon, 
                             epsilon_decay=epsilon_decay
                             )
+                update_time_total += (time.time() - update_time_start)
                 self.replay_buffer.push(state, action, next_state, reward)
                 state = next_state
-            self.writer.add_scalar('Reward/Episode', rew_ep, episode)
-            self.writer.add_scalar('Nb_steps/Episode', num_steps, episode)
-            self.writer.flush()
+            if num_steps < 200:
+                tasksolve += 1
+            if self.should_log:
+                self.writer.add_scalar('Reward/Episode', rew_ep, episode)
+                self.writer.add_scalar('Nb_steps/Episode', num_steps, episode)
+                self.writer.add_scalar('Solve_Task/Episode', tasksolve, episode)
+                self.writer.add_scalar('Seconds/Episode', (time.time() - start_time), episode)
+                self.writer.add_scalar('Seconds_Update/Episode', update_time_total, episode)
+                self.writer.flush()
         return total_reward
