@@ -10,10 +10,11 @@ import torch.optim as optim
 from collections import namedtuple, deque
 from torch.utils.tensorboard import SummaryWriter
 import datetime
+from tqdm import tqdm
 
 class DQNAgent(Agent):
     
-    def __init__(self, env, discount_factor = 0.99, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150, capacity = 10000, heuristic_reward = False, RND_reward = False, factor_favorize_reward = 1, global_reward_factor = 1, criterion = "MSE", neurons_RND = 16 ):#paramter to load or not the past trained weight of the neural.
+    def __init__(self, env, discount_factor = 0.99, starting_epsilon = 0.8, ending_epsilon = 0.05, epsilon_decay = 150, capacity = 10000, heuristic_reward = False, RND_reward = False, factor_favorize_reward = 1, global_reward_factor = 1, criterion = "MSE", neurons_RND = 16, use_log = False ):#paramter to load or not the past trained weight of the neural.
         if heuristic_reward and RND_reward:
             raise ValueError("can't use both : heuristic reward function and RND reward")
         
@@ -35,7 +36,8 @@ class DQNAgent(Agent):
 
         # random network distillation :
         self.use_RND_reward = RND_reward
-        if RND_reward:
+        
+        if self.use_RND_reward:
             # the 2 networks have different parameters at initilization ! (At moment i let default initilisation)
             self.RNDtargetNet = RND(nb_neurons = neurons_RND) 
             self.RNDpredictorNet = RND(nb_neurons = neurons_RND)
@@ -55,13 +57,15 @@ class DQNAgent(Agent):
         self.global_reward_factor = global_reward_factor
         self.ending_epsilon = ending_epsilon
         self.starting_epsilon = starting_epsilon
-            
-        if heuristic_reward :# Writer for logging purpose
-            logdir = f'./DQN/@e_decay={str(epsilon_decay)}@disc_factor={str(discount_factor)}@global_reward={str(global_reward_factor)}@crit={str(criterion)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
-        elif RND_reward :
-            logdir = f'./DQN_RND/@e_decay={str(epsilon_decay)}@disc_factor={str(discount_factor)}@global_reward={str(global_reward_factor)}@crit={str(criterion)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
-        self.writer = SummaryWriter(log_dir=logdir)
-        print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
+        self.use_log = use_log
+        
+        if self.use_log :    
+            if heuristic_reward :# Writer for logging purpose
+                logdir = f'./DQN/@e_decay={str(epsilon_decay)}@disc_factor={str(discount_factor)}@global_reward={str(global_reward_factor)}@crit={str(criterion)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+            elif RND_reward :
+                logdir = f'./DQN_RND/@e_decay={str(epsilon_decay)}@disc_factor={str(discount_factor)}@global_reward={str(global_reward_factor)}@crit={str(criterion)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+            self.writer = SummaryWriter(log_dir=logdir)
+            print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
               
     def select_action(self, state, iteration_number):
         """
@@ -132,76 +136,76 @@ class DQNAgent(Agent):
         # paste the parameter of fastupdateNet that were optimize by few batchs to the targetNet
         self.targetNet.load_state_dict(self.fastupdateNet.state_dict())
 
-    def updateRandomNetworkDistillation(self, batch_size, learning_rate):
+    def updateRandomNetworkDistillation(self, next_state, learning_rate):
+ 
+        #compute output of both vector
+        expected_value = self.RNDtargetNet(next_state)
+        predicted_value = self.RNDpredictorNet(next_state)
 
-        # split all transitions randomly into lists of batch_size length (except last list...)
-        list_transitions = self.replay_buffer_RND_update.sample(batch_size)
+        # compute the loss using mean square error
+        # loss is : how different are the 2 neural net for the given state
+        loss = self.criterionDQN(predicted_value, expected_value)
 
-        #loop over lists of transitions for a batch update
-        for i in range(min(len(list_transitions),30)):
-            transitions = list_transitions[i]
-            # reorganize the storage of the transitions
-            batch = self.replay_buffer_RND_update.Transition(*zip(*transitions))
-            
-            # extract states form the batch of transition
-            states = torch.cat(batch.state)
-
-            # compute output of both neural
-            expected_state_action_values = self.RNDtargetNet(states)
-            predicted_state_action_values = self.RNDpredictorNet(states)
-
-            # compute the loss using mean square error
-            # loss is : how different are the 2 neural net for these given states
-            loss = self.criterionDQN(predicted_state_action_values, expected_state_action_values)
-
-            # optimize parameter of RNDpredictor
-            # goal : to be close to the other neural for the actions that have already been observed !
-            optimizer = optim.AdamW(self.RNDpredictorNet.parameters(), lr=learning_rate, amsgrad=True)
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_value_(self.RNDpredictorNet.parameters(), 100) # clip values of parameter between -100 and 100 : prevent exploding gradient
-            optimizer.step()
+        # optimize parameter of RNDpredictor
+        # goal : to be close to the other neural for the actions that have already been observed !
+        optimizer = optim.AdamW(self.RNDpredictorNet.parameters(), lr=learning_rate, amsgrad=True)
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_value_(self.RNDpredictorNet.parameters(), 100) # clip values of parameter between -100 and 100 : prevent exploding gradient
+        optimizer.step()
      
     def run(self, number_episode, batch_size, learning_rate):
-        tasksolve = 0
+        past = False
+        #iteration number (episode)
         iteration_number = 0
+        #number of past steps during training
+        nb_transition_tot = 0
+        # use for first cumputation of mean/std :
+        mean_std_to_compute = True
 
+        #track cumulative task solved during training :
+        tasksolve = 0
+        #count env. reward per episode :
         environnement_reward = np.zeros((number_episode))
+        #count total reward per episode :
         total_reward = np.zeros((number_episode))
 
-        nb_transition_tot = 0
-        abc = 0
-        
-        #creating memory for the update
+        #creating memory for the update of DQN
         self.replay_buffer = ReplayMemory(self.capacity, self.Transition)
-        
-        if self.use_RND_reward :
-                self.replay_buffer_RND_update = ReplayMemory(self.capacity, self.Transition)
-            
-            
-        for i in range(number_episode):
+          
+        for i in tqdm(range(number_episode)):
+            #variable to count env reward per ep.:
             environnement_reward_ep = 0
+            #variable to count total reward per ep. :
             total_reward_ep = 0
+
+            #to visualize states of last episode :
             self.observations = []
+
+            #count iteration number :
             iteration_number += 1
+            #count nbr of transition per ep. :
             nb_trans_ep = 0
                  
+            #initialisation of episode :
             state, initial_observation = self.env.reset()
-            
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
 
             best_next_action = 100 #initialize best action for initial state (no heurisitic reward function for first action)
-            
-            done = False
+            done = False #to stop episode
             while not done :
+
                 nb_trans_ep +=1
                 nb_transition_tot += 1
+                
                 action = self.select_action(state, iteration_number)
                 next_state, reward, terminated, truncated, _ = self.env.step(action.item())
-                environnement_reward_ep += reward
+                done = terminated or truncated
                 
+                environnement_reward_ep += reward
                 self.observations.append(next_state)
                 
+                # coumpte heuristic reward if chosen
                 if self.use_heuristic_reward_function :
                     testing_state = state.numpy()[0]
                     
@@ -214,77 +218,92 @@ class DQNAgent(Agent):
                     else :
                         best_next_action = 2
 
-                done = terminated or truncated
-                
+                #deal with last step : (do sth special if done...)
                 if done :
                     next_state = None
                 else :
                     next_state = torch.tensor(next_state, dtype = torch.float32).unsqueeze(0)
 
-                state_for_RND = state
-                next_state_for_RND = next_state
-                
-                if self.use_RND_reward and (i>0 or nb_trans_ep > 4):
-                    if i == 0 and abc == 0 and nb_trans_ep == 5 :#first computation of mean after 5 transitions in the first episode
-                        abc += 1
-                        transitions = list(self.replay_buffer_RND_update.memory)
-                        past_data = self.replay_buffer_RND_update.Transition(*zip(*transitions))
+                # compute RND reward if chosen
+                if self.use_RND_reward and (i>0 or nb_trans_ep > 100):
+                    if mean_std_to_compute and nb_trans_ep == 101 :#first computation of mean after 5 transitions in the first episode
+                        mean_std_to_compute = False #to not enter again in if statement
+
+                        #compute mean/std states with past 5 transitions
+                        transitions = list(self.replay_buffer.memory)
+                        past_data = self.replay_buffer.Transition(*zip(*transitions))
                         past_states = torch.stack(past_data.state) #extract state from the memory of transitions + convert list of tensor to a single tensor
                         mean_states = past_states.mean(dim=0)
                         std_states = past_states.std(dim=0)
                         past_reward = torch.stack(past_data.reward)
-                        mean_reward = past_reward.mean(dim=0)
-                        std_reward = past_reward.std(dim=0)
 
-                    previous_mean_states = mean_states
-                    mean_states = mean_states + (state-mean_states)/(nb_transition_tot+1)
-                    std_states = ((state-previous_mean_states)*(state-mean_states)+std_states)/nb_transition_tot
+                        #normalizing states
+                        normalized_state = (state-mean_states)/std_states
+                        normalized_past_states = (past_states - mean_states) / std_states
+
+                        # compute std and means for RND rewards
+                        past_RND_rewards = (self.RNDtargetNet(normalized_past_states) - self.RNDpredictorNet(normalized_past_states))**2
+                        mean_RND_rewards = past_RND_rewards.mean(dim=0)
+                        std_RND_rewards = past_RND_rewards.std(dim=0)
+
+                        #compute current RND reward 
+                        not_normalized_RND_reward = (self.RNDtargetNet(normalized_state) - self.RNDpredictorNet(normalized_state))**2
+                        RND_reward = (not_normalized_RND_reward-mean_RND_rewards)/std_RND_rewards
+
+                    #updating the mean/std of past states :
+                    mean_states = ((mean_states*nb_transition_tot) + state)/(nb_transition_tot+1)
+
+                    d_s = state - mean_states
+                    std_states = ((nb_transition_tot*std_states**2+d_s**2)/(nb_transition_tot+1))**(0.5)
+
+                    #normalize current state and next_state :
+                    normalized_state = (state-mean_states)/std_states
                     
-                    state_for_RND = (state - mean_states)/std_states
-                    
-                    if next_state == None :
+                    if next_state is None :
                         next_state_for_RND = None
                     else :
                         next_state_for_RND = (next_state - mean_states)/std_states
-
-                    reward_from_MSE_nn = ((self.RNDpredictorNet(state_for_RND)-self.RNDtargetNet(state_for_RND)).item())**2
+                        
+                    #compute RND reward
+                    not_normalized_RND_reward = ((self.RNDpredictorNet(normalized_state)-self.RNDtargetNet(normalized_state)).item())**2
+                    RND_reward = (not_normalized_RND_reward-mean_RND_rewards)/(std_RND_rewards+10e-8)
                     
-                    previous_mean_reward = mean_reward
-                    mean_reward = mean_reward + (reward_from_MSE_nn-mean_reward)/(nb_transition_tot+1)
-                    std_reward = ((reward_from_MSE_nn-previous_mean_reward)*(reward_from_MSE_nn-mean_reward)+std_reward)/nb_transition_tot  
-                    rnd_reward = (reward_from_MSE_nn-mean_reward)/std_reward
-                    rnd_reward = torch.clamp(rnd_reward*self.global_reward_factor, min=-5, max= 5).item()
-                    reward = reward+abs(rnd_reward)
+                    #updating the mean/std of past rewards :
+                    #previous_mean_RND_rewards = mean_RND_rewards
+                    #mean_RND_rewards = ((mean_RND_rewards*nb_transition) + RND_reward)/(nb_transition_tot+1)
+                    #d_r = RND_reward - mean_RND_rewards
+                    #std_RND_rewards = ((nb_transition_tot*std_RND_rewards**2+d_r**2)/(nb_transition_tot+1))**(0.5)
+                    clamped_RND_reward = torch.clamp(RND_reward, min=-5, max= 5).item()
+                    reward = reward + abs(clamped_RND_reward)*self.global_reward_factor
                     
                 total_reward_ep += reward
                 
                 reward = torch.tensor([reward],dtype = torch.float32)
                 
                 self.replay_buffer.push(state, action, next_state, reward)
-                
-                if self.use_RND_reward:
-                    self.replay_buffer_RND_update.push(state_for_RND, action, next_state_for_RND, reward)
 
                 state = next_state
                 environnement_reward[i] = environnement_reward_ep
                 total_reward[i] = total_reward_ep
-                
-            # Updating neural net
-            if self.use_RND_reward:
-                self.updateRandomNetworkDistillation(batch_size, learning_rate)
+            
+                # Updating RND neural net with next_state normalized
+                if (not mean_std_to_compute) and (self.use_RND_reward) and next_state_for_RND is not None:
+                    self.updateRandomNetworkDistillation(next_state_for_RND, learning_rate)
                 
             self.update(batch_size, learning_rate)
-            self.writer.add_scalar('Reward/Episode', self.loss, i)
-            self.writer.add_scalar('Reward/Episode', reward.item(), i)
-            self.writer.add_scalar('Nb_steps/Episode', nb_trans_ep, i)
-            self.writer.add_scalar('environnement_reward/Episode', environnement_reward_ep, i)
-            self.writer.add_scalar('total_reward/Episode', total_reward_ep, i)
-            self.writer.add_scalar('auxiliary_reward/Episode', total_reward_ep-environnement_reward_ep, i)
+
             if nb_trans_ep < 200:
-                tasksolve+=1
-                
-            self.writer.add_scalar('solve_task/Episode', tasksolve, i)
-            self.writer.flush()
+                tasksolve+=1 
+            
+            if self.use_log : 
+                self.writer.add_scalar('Reward/Episode', self.loss, i)
+                self.writer.add_scalar('Reward/Episode', reward.item(), i)
+                self.writer.add_scalar('Nb_steps/Episode', nb_trans_ep, i)
+                self.writer.add_scalar('environnement_reward/Episode', environnement_reward_ep, i)
+                self.writer.add_scalar('total_reward/Episode', total_reward_ep, i)
+                self.writer.add_scalar('auxiliary_reward/Episode', total_reward_ep-environnement_reward_ep, i)  
+                self.writer.add_scalar('solve_task/Episode', tasksolve, i)
+                self.writer.flush()
         
         auxiliary_reward = total_reward - environnement_reward
         
