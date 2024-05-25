@@ -15,7 +15,7 @@ from collections import namedtuple
 
 class DynaAgent(Agent):
     
-    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 1, capacity = 10000, should_log = True):
+    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 10, capacity = 10000, should_log = True):
         super().__init__(env)
 
         # Environment values
@@ -43,13 +43,15 @@ class DynaAgent(Agent):
         self.R_estimate = np.zeros((self.nb_states, self.nb_actions))
         self.Q = np.zeros((self.nb_states, self.nb_actions))
 
-        print(f"-----------variables--------")
+        print(f"-----------variables- modif--------")
         print(f"number of positions = {self.nb_interval_position}")
         print(f"number of velocity = {self.nb_interval_speed}")
         print(f"number of states = {self.nb_states}")
         print(f"self.discretization_position = {self.discretization_position}")
         print(f"self.discretization_speed = {self.discretization_speed}")
         print(f"-----------------------------------------")
+
+        self.freq_result = [0, 0, 0]
 
         # Writer for logging purpose
         if self.should_log:
@@ -99,7 +101,9 @@ class DynaAgent(Agent):
         indice_state = self.found_indice_bin(state) 
         
         if np.random.uniform(0, 1) > epsilon:
-            return np.argmax(self.Q[indice_state,:])
+            result = np.argmax(self.Q[indice_state,:])
+            self.freq_result[result] += 1
+            return result
         else :
             return np.random.choice(np.array([0, 1, 2]))
     
@@ -129,7 +133,8 @@ class DynaAgent(Agent):
                 s_prime_probs = self.P_estimate[s][a]
                 expected_reward = self.R_estimate[s][a]
 
-                future_rewards = np.max(self.Q, axis=-1)
+                future_rewards = np.max(self.Q, axis=-1, initial=0)
+                assert s_prime_probs.shape == future_rewards.shape
                 expected_future_reward = np.sum(s_prime_probs * future_rewards)
                 self.Q[s][a] = expected_reward + self.discount_factor * expected_future_reward
 
@@ -144,7 +149,7 @@ class DynaAgent(Agent):
             num_steps = 0
             self.observations = []
             state, _ = self.env.reset()
-            if not self.should_log:
+            if self.should_log and episode >= 100:
                 self.env.render()
             done = False
             while not done:
@@ -157,16 +162,15 @@ class DynaAgent(Agent):
                                             )
                 self.freq_actions[action] += 1
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
-                if not self.should_log:
+                if self.should_log and episode >= 100:
                     self.env.render()
                 self.observe(state, action, next_state, reward, learning_rate)
                 if terminated:
                     print(f"Episode {episode} is done successfully !!!!!!")
                 done = terminated or truncated
-                if reward < -1.0:
+                if reward != -1.0:
                     print(f"reward = {reward} type = {type(reward)}")
                 rew_ep = rew_ep + reward
-                total_reward.append(rew_ep)
                 self.observations.append(next_state)
                 update_time_start = time.time()
                 self.update(iteration_number=episode,
@@ -186,4 +190,5 @@ class DynaAgent(Agent):
                 self.writer.add_scalar('Seconds/Episode', (time.time() - start_time), episode)
                 self.writer.add_scalar('Seconds_Update/Episode', update_time_total, episode)
                 self.writer.flush()
+            total_reward.append(rew_ep)
         return total_reward
