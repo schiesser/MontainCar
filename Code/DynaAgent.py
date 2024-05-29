@@ -42,8 +42,11 @@ class DynaAgent(Agent):
         self.P_estimate = np.ones((self.nb_states, self.nb_actions, self.nb_states)) / (self.nb_states * self.nb_actions)
         self.R_estimate = np.zeros((self.nb_states, self.nb_actions))
         self.Q = np.zeros((self.nb_states, self.nb_actions))
+        
+        self.Cnt = np.zeros((self.nb_states, self.nb_actions, self.nb_states))
+        self.cumv_R = np.zeros((self.nb_states, self.nb_actions))
 
-        print(f"-----------variables- modif--------")
+        print(f"-----------variables- new--------")
         print(f"number of positions = {self.nb_interval_position}")
         print(f"number of velocity = {self.nb_interval_speed}")
         print(f"number of states = {self.nb_states}")
@@ -108,21 +111,30 @@ class DynaAgent(Agent):
             return np.random.choice(np.array([0, 1, 2]))
     
         
-    def observe(self, state, action, next_state, reward, learning_rate):
+    def observe(self, state, action, next_state, reward):
         index_s = self.found_indice_bin(state)
         index_s_prime = self.found_indice_bin(next_state)
+
+        # update the counters
+        self.Cnt[index_s][action][index_s_prime] += 1
+        self.cumv_R[index_s][action] += reward
+
+        sum_cnt_s_a = np.sum(self.Cnt[index_s][action])
+
+        #update the reward and probabilities
+        self.R_estimate[index_s][action] = self.cumv_R[index_s][action] / sum_cnt_s_a
+        
+        for index_next_state in range(self.nb_states):
+            self.P_estimate[index_s][action][index_next_state] = self.Cnt[index_s][action][index_next_state] / sum_cnt_s_a
 
         probabilities = self.P_estimate[index_s][action]
         expected_reward = self.R_estimate[index_s][action]
         future_rewards = np.max(self.Q, axis=-1)
         expected_future_reward = np.sum(probabilities * future_rewards)
         self.Q[index_s][action] = expected_reward + self.discount_factor * expected_future_reward
-
-        self.R_estimate[index_s][action] = (1 - learning_rate) * self.R_estimate[index_s][action] + learning_rate * reward
-        self.P_estimate[index_s][action][index_s_prime] = (1 - learning_rate) * self.P_estimate[index_s][action][index_s_prime] + learning_rate
         
 
-    def update(self, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
+    def update(self, iteration_number):
         if iteration_number > self.k_updates - 1:
             list_transitions = self.replay_buffer.sample(self.k_updates, dyna=True)
 
@@ -133,13 +145,13 @@ class DynaAgent(Agent):
                 s_prime_probs = self.P_estimate[s][a]
                 expected_reward = self.R_estimate[s][a]
 
-                future_rewards = np.max(self.Q, axis=-1, initial=0)
+                future_rewards = np.max(self.Q, axis=-1)
                 assert s_prime_probs.shape == future_rewards.shape
                 expected_future_reward = np.sum(s_prime_probs * future_rewards)
                 self.Q[s][a] = expected_reward + self.discount_factor * expected_future_reward
 
 
-    def run(self, num_episodes = 3000, learning_rate = 0.005, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
+    def run(self, num_episodes = 3000, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
         total_reward = []
         tasksolve = 0
         for episode in tqdm(range(num_episodes)):
@@ -149,7 +161,7 @@ class DynaAgent(Agent):
             num_steps = 0
             self.observations = []
             state, _ = self.env.reset()
-            if self.should_log and episode >= 100:
+            if self.should_log:
                 self.env.render()
             done = False
             while not done:
@@ -162,9 +174,9 @@ class DynaAgent(Agent):
                                             )
                 self.freq_actions[action] += 1
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
-                if self.should_log and episode >= 100:
+                if self.should_log:
                     self.env.render()
-                self.observe(state, action, next_state, reward, learning_rate)
+                self.observe(state, action, next_state, reward)
                 if terminated:
                     print(f"Episode {episode} is done successfully !!!!!!")
                 done = terminated or truncated
@@ -173,11 +185,7 @@ class DynaAgent(Agent):
                 rew_ep = rew_ep + reward
                 self.observations.append(next_state)
                 update_time_start = time.time()
-                self.update(iteration_number=episode,
-                            starting_epsilon=starting_epsilon, 
-                            ending_epsilon=ending_epsilon, 
-                            epsilon_decay=epsilon_decay
-                            )
+                self.update(iteration_number=episode)
                 update_time_total += (time.time() - update_time_start)
                 self.replay_buffer.push(state, action, next_state, reward)
                 state = next_state
