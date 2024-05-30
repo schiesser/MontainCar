@@ -1,6 +1,8 @@
 import numpy as np
 import math
 import time
+import os
+import json
 import datetime
 from tqdm import tqdm
 from collections import namedtuple
@@ -140,7 +142,7 @@ class DynaAgent(Agent):
         
 
 
-    def run(self, num_episodes = 3000, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
+    def train(self, num_episodes = 3000, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
         total_reward = []
         tasksolve = 0
         for episode in tqdm(range(num_episodes)):
@@ -186,4 +188,49 @@ class DynaAgent(Agent):
                 self.writer.add_scalar('Solve_Task/Episode', tasksolve, episode)
                 self.writer.add_scalar('Seconds/Episode', (time.time() - start_time), episode)
                 self.writer.flush()
+        self.save_model()
         return total_reward
+    
+    def run(self, seed):
+        state, _ = self.env.reset(seed = seed)
+    
+
+    def save_model(self, dir = "./dyna_models"):
+        model_name = f'discr_step={str(self.discr_step)}@discount_factor={self.discount_factor}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+        logdir = f"{dir}/{model_name}"
+        os.mkdir(logdir)
+        os.chdir(logdir)
+
+        # Save the numpy arrays
+        np.save("Cnt", self.Cnt)
+        np.save("cumv_R", self.cumv_R)
+        np.save("Q", self.Q)
+        np.save("R_estimate", self.R_estimate)
+        np.save("P_estimate", self.P_estimate)
+
+        params = {}
+        params["discount_factor"] = self.discount_factor
+        params["discr_step"] = self.discr_step
+
+        with open("params.json", 'w') as f:
+            json.dump(params, f)
+
+        print(f"[Save Model] : Model was saved succesfully in {model_name} !")
+        
+
+    def load_model(self, dir = "./dyna_models", model_name = "discr_step=[0.025, 0.005]@discount_factor=0.99@20240530-180556"):
+        os.chdir(dir + "/" + model_name)
+
+        self.Cnt = np.load("Cnt.npy")
+        self.cumv_R = np.load("cumv_R.npy")
+        self.Q = np.load("Q.npy")
+        self.R_estimate = np.load("R_estimate.npy")
+        self.P_estimate = np.load("P_estimate.npy")
+
+        with open("params.json", 'r') as f:
+            params = json.load(f)
+            self.discount_factor = params["discount_factor"]
+            self.discr_step = params["discr_step"]
+        
+        print(f"[Load Model] : Model was loaded succesfully from {model_name} !")
+
