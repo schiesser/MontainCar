@@ -1,17 +1,12 @@
-from AbstractAgent import Agent
-
 import numpy as np
 import math
-import random
-import torch
 import time
 import datetime
-import torch.nn as nn
-import torch.optim as optim
 from tqdm import tqdm
+from collections import namedtuple
 from torch.utils.tensorboard import SummaryWriter
 from replay_buffer import ReplayMemoryDyna
-from collections import namedtuple
+from AbstractAgent import Agent
 
 class DynaAgent(Agent):
     
@@ -30,8 +25,8 @@ class DynaAgent(Agent):
         self.should_log = should_log
 
         # Calculate the number of states per interval/velocity and number of states
-        self.nb_interval_position = int(abs(self.interval_position[0] - self.interval_position[1]) / discr_step[0] )
-        self.nb_interval_speed = int(abs(self.interval_speed[0] - self.interval_speed[1]) / discr_step[1] )
+        self.nb_interval_position = int(1.8 / discr_step[0] )
+        self.nb_interval_speed = int(0.14 / discr_step[1] )
         self.nb_states = self.nb_interval_position * self.nb_interval_speed
 
         # Discretization of position and speed
@@ -54,8 +49,6 @@ class DynaAgent(Agent):
         print(f"self.discretization_speed = {self.discretization_speed}")
         print(f"-----------------------------------------")
 
-        self.freq_result = [0, 0, 0]
-
         # Writer for logging purpose
         if self.should_log:
             logdir = f'./runs/new@discr_step={str(discr_step)}@discount_factor={discount_factor}@k_updates={k_updates}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
@@ -63,10 +56,11 @@ class DynaAgent(Agent):
             print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
 
         # Replay buffer
-        print("new replaybuffer")
         self.Transition = namedtuple('Transition',('state', 'action'))
         self.replay_buffer = ReplayMemoryDyna(k_updates, self.Transition)
 
+        # Store some metrics for visualization/plots
+        self.freq_result = [0, 0, 0]
         self.freq_actions = [0, 0, 0]
         
         
@@ -150,12 +144,12 @@ class DynaAgent(Agent):
         total_reward = []
         tasksolve = 0
         for episode in tqdm(range(num_episodes)):
-            start_time = time.time()
-            update_time_total = 0
-            rew_ep = 0
-            num_steps = 0
-            self.observations = []
+            # Initialize the episode variables
+            self.observations, start_time, reward_episode, num_steps = [], time.time(), 0, 0
+            
+            # Reset the environment
             state, _ = self.env.reset()
+
             done = False
             while not done:
                 num_steps = num_steps + 1
@@ -166,28 +160,30 @@ class DynaAgent(Agent):
                                             epsilon_decay=epsilon_decay
                                             )
                 self.freq_actions[action] += 1
+
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
                 self.observe(state, action, next_state, reward)
-                if terminated:
-                    print(f"Episode {episode} is done successfully !!!!!!")
+
                 done = terminated or truncated
-                if reward != -1.0:
-                    print(f"reward = {reward} type = {type(reward)}")
-                rew_ep = rew_ep + reward
                 self.observations.append(next_state)
-                update_time_start = time.time()
+
                 self.update(iteration_number=episode)
-                update_time_total += (time.time() - update_time_start)
+
+                reward_episode = reward_episode + reward
+
                 self.replay_buffer.push(state, action)
                 state = next_state
+            # While ends here => episode is finished
+            
+            total_reward.append(reward_episode)
             if num_steps < 200:
                 tasksolve += 1
+
+            #Log realtime the metrics
             if self.should_log:
-                self.writer.add_scalar('Reward/Episode', rew_ep, episode)
+                self.writer.add_scalar('Reward/Episode', reward_episode, episode)
                 self.writer.add_scalar('Nb_steps/Episode', num_steps, episode)
                 self.writer.add_scalar('Solve_Task/Episode', tasksolve, episode)
                 self.writer.add_scalar('Seconds/Episode', (time.time() - start_time), episode)
-                self.writer.add_scalar('Seconds_Update/Episode', update_time_total, episode)
                 self.writer.flush()
-            total_reward.append(rew_ep)
         return total_reward
