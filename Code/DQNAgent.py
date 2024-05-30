@@ -18,7 +18,7 @@ class DQNAgent(Agent):
     def __init__(self, env, discount_factor = 0.99, epsilon_decay = 150, capacity = 10000, heuristic_reward = False, RND_reward = False, global_reward_factor = 1, neurons_RND = 32, neurons_DQN = 64, use_log = False, lr_RND =0.0025, lr_DQN =0.005, load_model = False ):
         
         if heuristic_reward and RND_reward:
-            raise ValueError("can't use both : heuristic reward function and RND reward")
+            raise ValueError("Careful you use both : heuristic reward function and RND reward")
         
         #learning rate for DQN and RND
         self.lr_RND=lr_RND
@@ -64,13 +64,7 @@ class DQNAgent(Agent):
         self.use_log = use_log
         
         if self.use_log :
-            logdir = f'./new/@global_reward_factor={str(global_reward_factor)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
-            """
-            if heuristic_reward :# Writer for logging purpose
-                logdir = f'./DQN/@e_decay={str(epsilon_decay)}@disc_factor={str(discount_factor)}@global_reward={str(global_reward_factor)}@crit={str(criterion)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
-            elif RND_reward :
-                logdir = f'./DQN_RND/@e_decay={str(epsilon_decay)}@disc_factor={str(discount_factor)}@global_reward={str(global_reward_factor)}@crit={str(criterion)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
-            """
+            logdir = f'./RNDcomplast/@factor={str(global_reward_factor)}@lr_DQN={str(lr_DQN)}@neuronRND={str(neurons_RND)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
             self.writer = SummaryWriter(log_dir=logdir)
             print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
         
@@ -78,8 +72,22 @@ class DQNAgent(Agent):
         self.observed_states_speed = np.zeros((200))
         self.observed_states_position = np.zeros((200))
         self.observed_reward = np.zeros((200))
-        self.nb_step = 0   
-    
+
+        #not necessary to retrain all....
+        if load_model:
+            directory = os.path.dirname(os.path.abspath(__file__))
+            
+            if heuristic_reward:
+                load_path = os.path.join(directory, "optimizeDQN_heuristic")
+            if RND_reward:
+                load_path = os.path.join(directory, "optimizeDQN_RND")
+            else :
+                load_path = os.path.join(directory, "optimizeDQN")
+                
+            state_dict = torch.load(load_path)
+            self.targetNet.load_state_dict(state_dict)
+            self.fastupdateNet.load_state_dict(state_dict)
+            
     def select_action(self, state, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05):
         
         # epsilon greedy policy
@@ -154,7 +162,7 @@ class DQNAgent(Agent):
         
         loss_update = 0
         #loop over 5 lists of transitions for a batch update
-        for i in range(min(len(list_transitions),20)): 
+        for i in range(len(list_transitions)-1): 
             transitions = list_transitions[i] 
             #reorganize the storage of the transitions 
             batch = self.replay_buffer.Transition(*zip(*transitions)) 
@@ -265,9 +273,6 @@ class DQNAgent(Agent):
             #variable to count total reward per ep. :
             total_reward_ep = 0
 
-            #to visualize states of last episode :
-            self.observations = []
-
             #count iteration number :
             iteration_number += 1
             #count nbr of transition per ep. :
@@ -289,7 +294,6 @@ class DQNAgent(Agent):
                 done = terminated or truncated
                 
                 environnement_reward_ep += reward
-                self.observations.append(next_state)
                 
                 # coumpte heuristic reward if chosen
                 if self.use_heuristic_reward_function :
@@ -311,10 +315,9 @@ class DQNAgent(Agent):
                     next_state = torch.tensor(next_state, dtype = torch.float32).unsqueeze(0)
 
                 # compute RND reward if chosen
-                if self.use_RND_reward and (i>27 or nb_transition_tot > 5000):
+                if self.use_RND_reward and (i>27 or nb_transition_tot > 3000):
 
-                    if mean_std_to_compute and nb_transition_tot == 5001 :#first computation of mean after 5000 transitions transitions in the first episode
-                        print("initilization")
+                    if mean_std_to_compute and nb_transition_tot == 3001 :#first computation of mean after 5000 transitions transitions in the first episode
                         mean_std_to_compute = False #to not enter again in if statement
 
                         mean_states, std_states, mean_RND_rewards, std_RND_rewards = self.init_mean_std()
@@ -330,8 +333,8 @@ class DQNAgent(Agent):
                     
                     if next_state is not None :
 
-                        #updating the mean/std of past states :
-                        mean_states, std_states = self.update_mean_std_states(next_state, mean_states, std_states, nb_transition_tot)
+                        #updating the mean/std of past states : !!! as seen in forum discussion : no running estimate of mean/std states !!!
+                        #mean_states, std_states = self.update_mean_std_states(next_state, mean_states, std_states, nb_transition_tot)
 
                         #compute RND reward
                         not_normalized_RND_reward = (self.RNDpredictorNet(normalized_next_state)-self.RNDtargetNet(normalized_next_state))**2
@@ -339,8 +342,7 @@ class DQNAgent(Agent):
                         mean_RND_rewards, std_RND_rewards = self.update_mean_std_aux_reward(not_normalized_RND_reward, mean_RND_rewards, std_RND_rewards, nb_transition_tot)
                         RND_reward = self.normalize_RND_reward(not_normalized_RND_reward, mean_RND_rewards, std_RND_rewards)
                         clamped_RND_reward = torch.clamp(RND_reward, min=-5, max= 5).item()
-                        
-                        reward = reward + abs(clamped_RND_reward)*self.global_reward_factor
+                        reward = reward + clamped_RND_reward*self.global_reward_factor
                     
                 total_reward_ep += reward
                 
@@ -351,13 +353,11 @@ class DQNAgent(Agent):
                 state = next_state
                 environnement_reward[i] = environnement_reward_ep
                 total_reward[i] = total_reward_ep
-                
-            update_RND = nb_transition_tot % 10 == 0
             
             # Updating RND neural net with next_state normalized
-            if (not mean_std_to_compute) and (self.use_RND_reward) and update_RND:
+            if (not mean_std_to_compute) and (self.use_RND_reward):
                 abc = self.updateRandomNetworkDistillation(mean_states, std_states, batch_size)
-                
+            
             loss[i] = self.update(batch_size, self.lr_DQN)
 
             if nb_trans_ep < 200:
@@ -392,7 +392,7 @@ class DQNAgent(Agent):
               
         # compute reward relatively to the positon and speed
         # basically a normalization is done
-        # factor 1.1 and 0.7 consider that the mean position is closer to the left boundary than the right booundary(goal)
+        # factor 1.1 and 0.7 to consider that the mean position is closer to the left boundary than the right booundary(goal)
         if position > -0.5:
             reward1 = abs((position-mean_position)/length_intervall_position)*1.1*1.5
             reward2 = abs((speed-mean_speed)/length_intervall_speed)*1.1
@@ -402,12 +402,13 @@ class DQNAgent(Agent):
 
         #keep max reward
         reward=min(1,max(reward1,reward2)*self.global_reward_factor)
-        """ reward = max(abs((position-mean_position)/length_intervall_position)*self.global_reward_factor,1)"""
+        
         return reward
         
     def run(self, seed):
         state, _ = self.env.reset(seed = seed)
         done = False
+        self.nb_step = 0 
         #do a loop if episide is not finished (truncated or terminated)
         while not done :
             #select action 
@@ -428,8 +429,13 @@ class DQNAgent(Agent):
         self.observed_states_position[self.nb_step] = state[0]
         self.observed_reward[self.nb_step] = reward
 
-    def save_neural_parameter(model):
+    def save_neural_parameter(use_RND=False, use_heuristic=False):
         directory = os.path.dirname(os.path.abspath(__file__))
-        save_path = os.path.join(directory,"optimizeDQN")
+        if use_RND:
+            save_path = os.path.join(directory,f"optimizeDQN{_RND}")
+        elif use_heuristic:
+            save_path = os.path.join(directory,f"optimizeDQN{_heuristic}")
+        else :
+            save_path = os.path.join(directory,f"optimizeDQN")
         torch.save(self.targetNet.state_dict(),save_path)
         print(f'Modèle sauvegardé dans {save_path}')
