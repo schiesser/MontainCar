@@ -193,6 +193,24 @@ class DynaAgent(Agent):
     
     def run(self, seed):
         state, _ = self.env.reset(seed = seed)
+        done = False
+        self.test_nb_step = 0
+        self.test_reward_episode = 0
+        
+        while not done :
+            action = self.select_action(state, iteration_number=1, starting_epsilon=0, ending_epsilon=0)
+            
+            next_state, reward, terminated, truncated, _ = self.env.step(action)
+            
+            done = terminated or truncated
+
+            self.test_nb_step += 1
+            self.test_reward_episode += reward
+
+            state = next_state
+        
+        if self.test_nb_step < 200:
+            return True
     
 
     def save_model(self, dir = "./dyna_models"):
