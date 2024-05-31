@@ -1,2 +1,4 @@
 
 *.pyc
+runs/
+dyna_models/
