@@ -15,7 +15,7 @@ import os
 
 class DQNAgent(Agent):
     
-    def __init__(self, env, discount_factor = 0.99, epsilon_decay = 150, capacity = 10000, heuristic_reward = False, RND_reward = False, global_reward_factor = 1, neurons_RND = 32, neurons_DQN = 64, use_log = False, lr_RND =0.0025, lr_DQN =0.005, load_model = False ):
+    def __init__(self, env, discount_factor = 0.99, epsilon_decay = 150, capacity = 10000, heuristic_reward = False, RND_reward = False, global_reward_factor = 1, neurons_RND = 32, neurons_DQN = 32, use_log = False, lr_RND =0.0025, lr_DQN =0.005, load_model = False ):
         
         if heuristic_reward and RND_reward:
             raise ValueError("Careful you use both : heuristic reward function and RND reward")
@@ -31,11 +31,6 @@ class DQNAgent(Agent):
         self.fastupdateNet = DQN(nb_neurons = neurons_DQN)
         self.targetNet.load_state_dict(self.fastupdateNet.state_dict())#we want to have to same initial parameters for both NN.
 
-        #if we want to load an existing model
-        if load_model: 
-            self.targetNet.load_state_dict(torch.load("path"))
-            self.fastupdateNet.load_state_dict(torch.load("path"))
-
         # replay buffer : tuple with name "transitions" and containing state action, next_state, reward component for each transitions.
         self.Transition = namedtuple('Transition',('state', 'action', 'next_state', 'reward'))
         self.replay_buffer = ReplayMemory(capacity, self.Transition)
@@ -46,7 +41,6 @@ class DQNAgent(Agent):
         self.use_heuristic_reward_function = heuristic_reward
         # random network distillation :
         self.use_RND_reward = RND_reward
-        
         
         if self.use_RND_reward:
             # initialization of RND with independent weights
@@ -64,7 +58,7 @@ class DQNAgent(Agent):
         self.use_log = use_log
         
         if self.use_log :
-            logdir = f'./RNDcomplast/@factor={str(global_reward_factor)}@lr_DQN={str(lr_DQN)}@neuronRND={str(neurons_RND)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+            logdir = f'./RNDcomplast/@factor={str(global_reward_factor)}@lr_DQN={str(lr_DQN)}@cap={str(capacity)}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
             self.writer = SummaryWriter(log_dir=logdir)
             print(f"------------------------------------------\nWe will log this experiment in directory {logdir}\n------------------------------------------")
         
@@ -78,11 +72,11 @@ class DQNAgent(Agent):
             directory = os.path.dirname(os.path.abspath(__file__))
             
             if heuristic_reward:
-                load_path = os.path.join(directory, "optimizeDQN_heuristic")
-            if RND_reward:
-                load_path = os.path.join(directory, "optimizeDQN_RND")
+                load_path = os.path.join(directory, "optimizeDQN_heuristic.pth")
+            elif RND_reward:
+                load_path = os.path.join(directory, "optimizeDQN_RND.pth")
             else :
-                load_path = os.path.join(directory, "optimizeDQN")
+                load_path = os.path.join(directory, "optimizeDQN.pth")
                 
             state_dict = torch.load(load_path)
             self.targetNet.load_state_dict(state_dict)
@@ -111,7 +105,7 @@ class DQNAgent(Agent):
         # Update loop over every batch list of transition (except last one cause it can be a very small list)
         for i in range(len(list_transitions)-1): 
             transitions = list_transitions[i] 
-            # reorganize the storage of the transitions : https://stackoverflow.com/a/19343/3343043
+            # reorganize the storage of the transitions
             batch = self.replay_buffer.Transition(*zip(*transitions)) 
             
             #deal with ending state (which has "None" value)
@@ -161,7 +155,6 @@ class DQNAgent(Agent):
         list_transitions = self.replay_buffer.sample(batch_size)
         
         loss_update = 0
-        #loop over 5 lists of transitions for a batch update
         for i in range(len(list_transitions)-1): 
             transitions = list_transitions[i] 
             #reorganize the storage of the transitions 
@@ -407,19 +400,21 @@ class DQNAgent(Agent):
         
     def run(self, seed):
         state, _ = self.env.reset(seed = seed)
+        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
         done = False
         self.nb_step = 0 
         #do a loop if episide is not finished (truncated or terminated)
         while not done :
             #select action 
-            action = self.select_action(state, iteration_number = 1, starting_epsilon = 1, ending_epsilon = 1) #select action with max(Q), no more exploration...
+            action = self.select_action(state, iteration_number = 1, starting_epsilon = 0, ending_epsilon = 0) #select action with max(Q), no more exploration...
             action = action.item()
             #do the step relating to chosen action
             next_state, reward, terminated, truncated, _ = self.env.step(action)
             #store obervation
-            self.observe(state, action, next_state, reward)
+            #self.observe(state, action, next_state, reward)
             # prepare next step
             state = next_state
+            state = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
             done = terminated or truncated
             self.nb_step +=1
     
@@ -429,13 +424,13 @@ class DQNAgent(Agent):
         self.observed_states_position[self.nb_step] = state[0]
         self.observed_reward[self.nb_step] = reward
 
-    def save_neural_parameter(use_RND=False, use_heuristic=False):
+    def save_neural_parameter(self, use_RND=False, use_heuristic=False):
         directory = os.path.dirname(os.path.abspath(__file__))
         if use_RND:
-            save_path = os.path.join(directory,f"optimizeDQN{_RND}")
+            save_path = os.path.join(directory,"optimizeDQN_RND.pth")
         elif use_heuristic:
-            save_path = os.path.join(directory,f"optimizeDQN{_heuristic}")
+            save_path = os.path.join(directory,"optimizeDQN_heuristic.pth")
         else :
-            save_path = os.path.join(directory,f"optimizeDQN")
+            save_path = os.path.join(directory,"optimizeDQN.pth")
         torch.save(self.targetNet.state_dict(),save_path)
         print(f'Modèle sauvegardé dans {save_path}')
