@@ -12,7 +12,7 @@ from AbstractAgent import Agent
 
 class DynaAgent(Agent):
     
-    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 10, should_log = True):
+    def __init__(self, env, discr_step = [0.025, 0.005], discount_factor = 0.99, k_updates = 10, should_log = True, load_model = False):
         super().__init__(env)
 
         # Environment values
@@ -60,6 +60,9 @@ class DynaAgent(Agent):
         # Replay buffer
         self.Transition = namedtuple('Transition',('state', 'action'))
         self.replay_buffer = ReplayMemoryDyna(k_updates, self.Transition)
+
+        if load_model:
+            self.load_model()
 
         # Store some metrics for visualization/plots
         self.freq_result = [0, 0, 0]
@@ -121,12 +124,12 @@ class DynaAgent(Agent):
         #update the reward and probabilities
         self.R_estimate[index_s][action] = self.cumv_R[index_s][action] / sum_cnt_s_a
         
-        # for index_next_state in range(self.nb_states):
-        #     self.P_estimate[index_s][action][index_next_state] = self.Cnt[index_s][action][index_next_state] / sum_cnt_s_a
         self.P_estimate[index_s][action] = self.Cnt[index_s][action] / sum_cnt_s_a
 
         expected_future_reward = np.sum(np.multiply(self.P_estimate[index_s][action], np.max(self.Q, axis=-1)))
+        old_q = self.Q[index_s][action]
         self.Q[index_s][action] = self.R_estimate[index_s][action] + self.discount_factor * expected_future_reward
+        return self.Q[index_s][action] - old_q
         
 
     def update(self, iteration_number):
@@ -143,11 +146,12 @@ class DynaAgent(Agent):
 
 
     def train(self, num_episodes = 3000, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
+        self.delta_q_update = []
         total_reward = []
         tasksolve = 0
         for episode in tqdm(range(num_episodes)):
             # Initialize the episode variables
-            self.observations, start_time, reward_episode, num_steps = [], time.time(), 0, 0
+            self.observations, start_time, reward_episode, num_steps, delta_q = [], time.time(), 0, 0, 0
             
             # Reset the environment
             state, _ = self.env.reset()
@@ -164,7 +168,7 @@ class DynaAgent(Agent):
                 self.freq_actions[action] += 1
 
                 next_state, reward, terminated, truncated, _ = self.env.step(action)
-                self.observe(state, action, next_state, reward)
+                delta_q += self.observe(state, action, next_state, reward)
 
                 done = terminated or truncated
                 self.observations.append(next_state)
@@ -178,11 +182,13 @@ class DynaAgent(Agent):
             # While ends here => episode is finished
             
             total_reward.append(reward_episode)
+            self.delta_q_update.append(delta_q)
             if num_steps < 200:
                 tasksolve += 1
 
             #Log realtime the metrics
             if self.should_log:
+                self.writer.add_scalar('Delta_Q/Episode', delta_q, episode)
                 self.writer.add_scalar('Reward/Episode', reward_episode, episode)
                 self.writer.add_scalar('Nb_steps/Episode', num_steps, episode)
                 self.writer.add_scalar('Solve_Task/Episode', tasksolve, episode)
