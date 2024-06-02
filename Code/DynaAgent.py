@@ -143,7 +143,7 @@ class DynaAgent(Agent):
 
     def train(self, num_episodes = 3000, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
         self.delta_q_update = []
-        total_reward = []
+        self.total_reward = []
         tasksolve = 0
 
         #create a picture directory to store the plot of q values every 100 ep
@@ -185,7 +185,7 @@ class DynaAgent(Agent):
                 state = next_state
             # While ends here => episode is finished
             
-            total_reward.append(reward_episode)
+            self.total_reward.append(reward_episode)
             self.delta_q_update.append(delta_q)
             if num_steps < 200:
                 tasksolve += 1
@@ -199,7 +199,7 @@ class DynaAgent(Agent):
                 self.writer.add_scalar('Seconds/Episode', (time.time() - start_time), episode)
                 self.writer.flush()
         self.save_model()
-        return total_reward
+        return self.total_reward
     
     def run(self, seed):
         state, _ = self.env.reset(seed = seed)
