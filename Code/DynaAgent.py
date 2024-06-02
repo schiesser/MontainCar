@@ -83,8 +83,8 @@ class DynaAgent(Agent):
         return indice_position * self.nb_interval_speed + indice_speed
         
 
-    def found_state(self, correct_indice): #not sure it will be usefull, do the inverse of found_indice_bin : get position/speed interval from and indice
-        
+    def found_state(self, correct_indice):
+
         indice_speed = correct_indice % self.nb_interval_speed
         indice_position = int((correct_indice - indice_speed) / self.nb_interval_speed)
 
@@ -95,11 +95,6 @@ class DynaAgent(Agent):
 
 
     def select_action(self, state, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
-        """
-        Chooses an epsilon-greedy action given a state and its Q-values associated
-        parameters : starting_epsilon, ending_epsilon, epsilon_decay allow to manage exploitation and exploration during action selection
-        epsilon is decresing relatively to the number of iterations
-        """
         # reason : more exploration at beginning, and increase exploitation with iteration
         epsilon = ending_epsilon + (starting_epsilon - ending_epsilon) * math.exp(-iteration_number/epsilon_decay)
         indice_state = self.found_indice_bin(state) 
@@ -124,12 +119,12 @@ class DynaAgent(Agent):
 
         #update the reward and probabilities
         self.R_estimate[index_s][action] = self.cumv_R[index_s][action] / sum_cnt_s_a
-        
         self.P_estimate[index_s][action] = self.Cnt[index_s][action] / sum_cnt_s_a
 
         expected_future_reward = np.sum(np.multiply(self.P_estimate[index_s][action], np.max(self.Q, axis=-1)))
         old_q = self.Q[index_s][action]
         self.Q[index_s][action] = self.R_estimate[index_s][action] + self.discount_factor * expected_future_reward
+        # we want delta Q
         return abs(self.Q[index_s][action] - old_q)
         
 
@@ -150,11 +145,15 @@ class DynaAgent(Agent):
         self.delta_q_update = []
         total_reward = []
         tasksolve = 0
+
+        #create a picture directory to store the plot of q values every 100 ep
         picture_dir = f'./dyna_pics/discr_step={str(self.discr_step)}@discount_factor={self.discount_factor}@{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
         os.mkdir(picture_dir)
+
         for episode in tqdm(range(num_episodes)):
             if episode % 100 == 0:
                 self.plot_q_value(episode=episode, picture_dir=picture_dir)
+
             # Initialize the episode variables
             self.observations, start_time, reward_episode, num_steps, delta_q = [], time.time(), 0, 0, 0
             
@@ -237,6 +236,7 @@ class DynaAgent(Agent):
         np.save("R_estimate", self.R_estimate)
         np.save("P_estimate", self.P_estimate)
 
+        # Save other parameters
         params = {}
         params["discount_factor"] = self.discount_factor
         params["discr_step"] = self.discr_step
@@ -260,6 +260,8 @@ class DynaAgent(Agent):
             params = json.load(f)
             self.discount_factor = params["discount_factor"]
             self.discr_step = params["discr_step"]
+
+        # Re-do the intervals accordingly to discr_step from json
         
         # Calculate the number of states per interval/velocity and number of states
         self.nb_interval_position = int(1.8 / self.discr_step[0] )
@@ -270,26 +272,19 @@ class DynaAgent(Agent):
         self.discretization_position = np.linspace(self.interval_position[0], self.interval_position[1], self.nb_interval_position + 1)
         self.discretization_speed = np.linspace(self.interval_speed[0], self.interval_speed[1], self.nb_interval_speed + 1)
 
-        
         print(f"[Load Model] : Model was loaded succesfully from {model_name} !")
 
     def plot_q_value(self, episode, picture_dir):
         # do the plotting 
         position_bins = np.arange(-1.2, 0.6, self.discr_step[0])
         velocity_bins = np.arange(-0.07, 0.0699, self.discr_step[1])
+        
         num_pos_bins = len(position_bins)
         num_vel_bins = len(velocity_bins)
 
         max_Q_values = np.max(self.Q, axis=1).reshape(num_pos_bins, num_vel_bins)
-
-        # Identify unvisited states (where all Q-values are zero)
         unvisited_mask = np.all(self.Q == 0, axis=1).reshape(num_pos_bins, num_vel_bins)
-
-        # Mask the max Q-values of unvisited states
         masked_max_Q_values = np.ma.masked_where(unvisited_mask, max_Q_values)
-
-        # Create a meshgrid for the position and velocity bins
-        pos_grid, vel_grid = np.meshgrid(position_bins, velocity_bins, indexing='ij')
 
         # Plot the max Q-values as a heatmap
         plt.figure(figsize=(12, 8))
