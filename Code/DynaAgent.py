@@ -92,6 +92,18 @@ class DynaAgent(Agent):
         speed = np.array([self.discretization_speed[indice_speed], self.discretization_speed[indice_speed] + 1])
 
         return position,speed
+    
+    def found_bins(self, state):
+        # Extract position and speed form state
+        position = state[0]
+        speed = state[1]
+
+        # Get the indexes
+        indice_position = np.digitize(position, self.discretization_position) - 1
+        indice_speed = np.digitize(speed, self.discretization_speed)-1
+
+        # Get the global index of the state
+        return indice_position, indice_speed
 
 
     def select_action(self, state, iteration_number, starting_epsilon = 0.9, ending_epsilon = 0.05, epsilon_decay = 150):
@@ -151,9 +163,9 @@ class DynaAgent(Agent):
         os.mkdir(picture_dir)
 
         for episode in tqdm(range(num_episodes)):
-            if episode % 100 == 0:
+            if episode % 100 == 0 and episode > 0:
                 self.plot_q_value(episode=episode, picture_dir=picture_dir)
-
+            self.states = []
             # Initialize the episode variables
             self.observations, start_time, reward_episode, num_steps, delta_q = [], time.time(), 0, 0, 0
             
@@ -162,6 +174,8 @@ class DynaAgent(Agent):
 
             done = False
             while not done:
+                pos, vel = self.found_bins(state)
+                self.states.append(state)
                 num_steps = num_steps + 1
                 action = self.select_action(state=state, 
                                             iteration_number=episode, 
@@ -274,7 +288,8 @@ class DynaAgent(Agent):
 
         print(f"[Load Model] : Model was loaded succesfully from {model_name} !")
 
-    def plot_q_value(self, episode, picture_dir):
+
+    def plot_q_value(self, episode, picture_dir = ""):
         # do the plotting 
         position_bins = np.arange(-1.2, 0.6, self.discr_step[0])
         velocity_bins = np.arange(-0.07, 0.0699, self.discr_step[1])
@@ -289,10 +304,25 @@ class DynaAgent(Agent):
         # Plot the max Q-values as a heatmap
         plt.figure(figsize=(12, 8))
         heatmap = plt.imshow(masked_max_Q_values.T, cmap='plasma', origin='lower', aspect='auto',
-                     extent=[position_bins[0], position_bins[-1] + self.discr_step[0], velocity_bins[0], velocity_bins[-1] + self.discr_step[1]])
+                        extent=[position_bins[0], position_bins[-1] + self.discr_step[0], velocity_bins[0], velocity_bins[-1] + self.discr_step[1]])
         plt.colorbar(heatmap, label='Max Q-value')
-        plt.xlabel('Position')
-        plt.ylabel('Velocity')
-        plt.title(f'Max Q-value for each (Position, Velocity) discr_step={self.discr_step} episode={episode}')
+        plt.xlabel('Position', fontsize=18)
+        plt.ylabel('Velocity', fontsize=18)
+        plt.title(f'Max Q-value for each (Position, Velocity) discr_step={self.discr_step} episode={episode}', fontsize=18)
+
+        visited = np.zeros((self.nb_interval_position, self.nb_interval_speed))
+        # Extract the position and velocity values from the states
+        positions = []
+        velocities = []
+        for i in range(len(self.states)):
+            pos, vel = self.found_bins(self.states[i])
+            if visited[pos][vel] == 0:
+                visited[pos][vel] = 1
+                positions.append(position_bins[pos] + self.discr_step[0]/2)
+                velocities.append(velocity_bins[vel] + self.discr_step[1]/2)
+
+        # Plot the trajectory
+        plt.plot(positions, velocities, 'r-', label=f'Trajectory Ep: {episode}')
+        plt.legend(fontsize=18)
         plt.savefig(f'{picture_dir}/Dyna_Q_values@discr_step={self.discr_step}@episode={episode}.png') 
         plt.close()
