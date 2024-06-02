@@ -16,7 +16,7 @@ import os
 class DQNAgent(Agent):
     
     def __init__(self, env, discount_factor = 0.99, epsilon_decay = 150, capacity = 10000, heuristic_reward = False, RND_reward = False, global_reward_factor = 1, neurons_RND = 32, neurons_DQN = 32, use_log = False, lr_RND =0.0025, lr_DQN =0.005, load_model = False ):
-        
+        self.nb_step_training=0
         if heuristic_reward and RND_reward:
             raise ValueError("Careful you use both : heuristic reward function and RND reward")
         
@@ -367,9 +367,18 @@ class DQNAgent(Agent):
                 self.writer.flush()
         
         auxiliary_reward = total_reward - environnement_reward
+        self.nb_step_training = environnement_reward*(-1)
 
         return environnement_reward, auxiliary_reward, total_reward, loss, solved_task
-            
+        
+    def save_nb_step_training(self):
+
+        if self.use_RND_reward:
+            np.save(f"@RND_step_training@{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}", self.nb_step_training)
+        else :
+            np.save(f"@heur_step_training@{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}", self.nb_step_training)
+        print("saved !")
+        
     def heuristic_reward_function(self, state):
         #give a reward if the action is "optimal" (in our opinion)
 
@@ -433,4 +442,4 @@ class DQNAgent(Agent):
         else :
             save_path = os.path.join(directory,"optimizeDQN.pth")
         torch.save(self.targetNet.state_dict(),save_path)
-        print(f'Modèle sauvegardé dans {save_path}')
+        print(f'saved in{save_path}')
